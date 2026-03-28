@@ -16,19 +16,17 @@ virtualenv/
 .virtualenv/
 
 # ── Secrets & Config ───────────────────────────────────────────────────────────
-.env                        # real .env with MAC address / passwords
-esp32/esphome/secrets.yaml  # real ESPHome secrets
+.env
+esp32/esphome/secrets.yaml
 
-# ── AI Models — large files, don't commit to GitHub ───────────────────────────
-models/*.pt                 # PyTorch model weights
+# ── AI Models ─────────────────────────────────────────────────────────────────
+models/*.pt
 models/*.pth
 models/*.onnx
 models/*.tflite
-models/best_ncnn_model/     # NCNN model folder
+models/best_ncnn_model/
 models/*.bin
 models/*.param
-
-# Training outputs (from Ultralytics / Colab)
 runs/
 *.cache
 
@@ -51,11 +49,16 @@ build/
 *.egg-info/
 *.egg
 
+# ── PlatformIO ────────────────────────────────────────────────────────────────
+.pio/
+.pioenvs/
+.piolibdeps/
+
 # ── Jupyter ───────────────────────────────────────────────────────────────────
 .ipynb_checkpoints/
 *.ipynb
 
-# ── Reference repos (cloned locally, not for distribution) ───────────────────
+# ── Reference repos ───────────────────────────────────────────────────────────
 refs/
 
 # ── Misc ──────────────────────────────────────────────────────────────────────
