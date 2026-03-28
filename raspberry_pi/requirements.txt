@@ -1,0 +1,24 @@
+# ── Core BLE library (replaces pygatt / gatttool) ─────────────────────────────
+bleak>=0.21.1
+
+# ── AI / Computer Vision ──────────────────────────────────────────────────────
+# YOLO (works on Pi 5 and PC)
+ultralytics>=8.2.0
+
+# OpenCV - use headless version on Raspberry Pi (no GUI deps)
+# PC / development:
+opencv-python>=4.8.0
+# Raspberry Pi (comment out opencv-python above, use this instead):
+# opencv-python-headless>=4.8.0
+
+# NumPy
+numpy>=1.24.0
+
+# ── TFLite (MobileNetV2) - only needed if MODEL_TYPE = "tflite" ───────────────
+# Raspberry Pi 4/5:
+# tflite-runtime>=2.13.0
+# OR use full TensorFlow (heavier):
+# tensorflow>=2.13.0
+
+# ── Utilities ─────────────────────────────────────────────────────────────────
+python-dotenv>=1.0.0    # load .env files for secrets

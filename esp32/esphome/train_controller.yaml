@@ -1,0 +1,314 @@
+# ============================================================================
+# train_controller.yaml  —  ESPHome config for ESP32
+# ============================================================================
+# Harry Locomotive Project — Collision Prevention (Hardware Layer)
+#
+# What this does:
+#   • IR sensor on GPIO16 detects inner loop train entering shared section
+#   • IR sensor on GPIO17 confirms train has fully cleared the section
+#   • ESP32 sends BLE STOP / RESUME commands to outer loop train
+#   • Emergency stop button visible in Home Assistant dashboard
+#
+# Confirmed UUIDs (Peter's train — verified):
+#   Service UUID   : e20a39f4-73f5-4bc4-a12f-17d1ad07a961
+#   Characteristic : 08590f7e-db05-467e-8757-72f6faeb13d4
+#
+# Commands (from Property404/lionchief-controller reverse engineering):
+#   STOP   : [0x00, 0x45, 0x00]
+#   SLOW   : [0x00, 0x45, 0x03]
+#   MEDIUM : [0x00, 0x45, 0x07]
+#
+# Reference: https://community.home-assistant.io/t/quick-and-dirty-control-lionel-lionchief-ble-via-esphome-ble-client/802907
+# ============================================================================
+
+esphome:
+  name: train-collision-guard
+  friendly_name: Train Collision Guard
+  comment: "LionChief Collision Prevention — Harry Locomotive Project"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+# ── Logging (set to INFO in production, DEBUG during setup) ──────────────────
+logger:
+  level: DEBUG
+
+# ── Wi-Fi (Peter's home network) ─────────────────────────────────────────────
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # Static IP optional — makes it easier to find on network
+  # manual_ip:
+  #   static_ip: 192.168.1.200
+  #   gateway: 192.168.1.1
+  #   subnet: 255.255.255.0
+  ap:
+    ssid: "TrainGuard Fallback"
+    password: "trainguard123"
+
+captive_portal:
+
+# ── Home Assistant API ────────────────────────────────────────────────────────
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# ── BLE Scanner (required by ble_client — also used to find train MAC) ────────
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 1100ms
+    window: 1100ms
+    active: true
+
+# ── BLE Client — connects to OUTER LOOP train ─────────────────────────────────
+# Replace XX:XX:XX:XX:XX:XX with the actual MAC address Peter provides
+# (Peter finds this with nRF Connect app while train is powered on)
+ble_client:
+  - mac_address: "XX:XX:XX:XX:XX:XX"   # ← REPLACE WITH PETER'S MAC
+    id: outer_train
+    auto_connect: true
+
+    on_connect:
+      then:
+        - lambda: |-
+            id(train_connected) = true;
+            ESP_LOGI("train", "✅ Connected to outer loop train!");
+        - light.turn_on: status_led   # green = connected
+
+    on_disconnect:
+      then:
+        - lambda: |-
+            id(train_connected) = false;
+            ESP_LOGW("train", "⚠️  Disconnected from train — will retry");
+        - light.turn_off: status_led
+
+# ── Global state variables ────────────────────────────────────────────────────
+globals:
+  - id: train_connected
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+  - id: zone_active
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+# ── IR SENSOR 1: Entry sensor — inner train entering shared zone ──────────────
+# Wire: Sensor OUT → GPIO16, VCC → 3.3V, GND → GND
+binary_sensor:
+
+  - platform: gpio
+    pin:
+      number: GPIO16
+      mode:
+        input: true
+        pullup: true
+    name: "Inner Train Detected (Entry)"
+    id: ir_entry_sensor
+    device_class: motion
+
+    # 50ms debounce prevents false triggers from vibration
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 100ms
+
+    # ── Train detected entering zone → STOP outer train ──────────────────────
+    on_press:
+      then:
+        - logger.log:
+            level: WARN
+            format: "⚠️  Inner train entering shared zone! Stopping outer train."
+        - lambda: id(zone_active) = true;
+        - ble_client.ble_write:
+            id: outer_train
+            service_uuid: "e20a39f4-73f5-4bc4-a12f-17d1ad07a961"
+            characteristic_uuid: "08590f7e-db05-467e-8757-72f6faeb13d4"
+            value: [0x00, 0x45, 0x00]      # STOP
+        - light.turn_on:
+            id: status_led
+            effect: "Blink Fast"           # rapid blink = stopped state
+
+    # ── Train clears entry sensor → start exit sensor watch ──────────────────
+    on_release:
+      then:
+        - logger.log:
+            level: INFO
+            format: "Inner train passed entry sensor — watching exit sensor..."
+
+
+  # ── IR SENSOR 2: Exit sensor — inner train has fully cleared the zone ───────
+  # Wire: Sensor OUT → GPIO17, VCC → 3.3V, GND → GND
+  - platform: gpio
+    pin:
+      number: GPIO17
+      mode:
+        input: true
+        pullup: true
+    name: "Inner Train Detected (Exit)"
+    id: ir_exit_sensor
+    device_class: motion
+
+    filters:
+      - delayed_on: 50ms
+      - delayed_off: 200ms
+
+    # ── Train passes exit sensor and clears → resume outer train ─────────────
+    on_release:
+      then:
+        - if:
+            condition:
+              lambda: 'return id(zone_active);'
+            then:
+              - logger.log:
+                  level: INFO
+                  format: "✅ Inner train cleared shared zone! Resuming outer train."
+              - lambda: id(zone_active) = false;
+              - delay: 2500ms              # safety buffer
+              - ble_client.ble_write:
+                  id: outer_train
+                  service_uuid: "e20a39f4-73f5-4bc4-a12f-17d1ad07a961"
+                  characteristic_uuid: "08590f7e-db05-467e-8757-72f6faeb13d4"
+                  value: [0x00, 0x45, 0x07]   # RESUME at medium speed
+              - light.turn_on:
+                  id: status_led
+                  effect: "None"
+
+  # ── Physical emergency stop button (optional) ─────────────────────────────
+  - platform: gpio
+    pin:
+      number: GPIO0           # Boot button on most ESP32 DevKit boards
+      mode:
+        input: true
+        pullup: true
+    name: "Physical Stop Button"
+    id: hw_stop_button
+    filters:
+      - delayed_on: 20ms
+    on_press:
+      then:
+        - logger.log:
+            level: WARN
+            format: "🚨 Hardware emergency stop pressed!"
+        - ble_client.ble_write:
+            id: outer_train
+            service_uuid: "e20a39f4-73f5-4bc4-a12f-17d1ad07a961"
+            characteristic_uuid: "08590f7e-db05-467e-8757-72f6faeb13d4"
+            value: [0x00, 0x45, 0x00]      # STOP
+
+
+# ── Dashboard buttons (appear in Home Assistant) ──────────────────────────────
+button:
+
+  - platform: template
+    name: "🚨 Emergency Stop"
+    id: btn_emergency_stop
+    icon: mdi:stop-circle
+    on_press:
+      then:
+        - logger.log:
+            level: ERROR
+            format: "EMERGENCY STOP via HA dashboard!"
+        - lambda: id(zone_active) = true;
+        - ble_client.ble_write:
+            id: outer_train
+            service_uuid: "e20a39f4-73f5-4bc4-a12f-17d1ad07a961"
+            characteristic_uuid: "08590f7e-db05-467e-8757-72f6faeb13d4"
+            value: [0x00, 0x45, 0x00]
+
+  - platform: template
+    name: "▶️  Resume Train"
+    id: btn_resume
+    icon: mdi:play-circle
+    on_press:
+      then:
+        - logger.log:
+            level: INFO
+            format: "Manual resume via HA dashboard"
+        - lambda: id(zone_active) = false;
+        - ble_client.ble_write:
+            id: outer_train
+            service_uuid: "e20a39f4-73f5-4bc4-a12f-17d1ad07a961"
+            characteristic_uuid: "08590f7e-db05-467e-8757-72f6faeb13d4"
+            value: [0x00, 0x45, 0x07]
+
+  - platform: template
+    name: "🔔 Test Bell"
+    icon: mdi:bell
+    on_press:
+      then:
+        - ble_client.ble_write:
+            id: outer_train
+            service_uuid: "e20a39f4-73f5-4bc4-a12f-17d1ad07a961"
+            characteristic_uuid: "08590f7e-db05-467e-8757-72f6faeb13d4"
+            value: [0x00, 0x47, 0x01]
+        - delay: 2s
+        - ble_client.ble_write:
+            id: outer_train
+            service_uuid: "e20a39f4-73f5-4bc4-a12f-17d1ad07a961"
+            characteristic_uuid: "08590f7e-db05-467e-8757-72f6faeb13d4"
+            value: [0x00, 0x47, 0x00]
+
+  - platform: template
+    name: "📯 Test Horn"
+    icon: mdi:bugle
+    on_press:
+      then:
+        - ble_client.ble_write:
+            id: outer_train
+            service_uuid: "e20a39f4-73f5-4bc4-a12f-17d1ad07a961"
+            characteristic_uuid: "08590f7e-db05-467e-8757-72f6faeb13d4"
+            value: [0x00, 0x48, 0x01]
+        - delay: 2s
+        - ble_client.ble_write:
+            id: outer_train
+            service_uuid: "e20a39f4-73f5-4bc4-a12f-17d1ad07a961"
+            characteristic_uuid: "08590f7e-db05-467e-8757-72f6faeb13d4"
+            value: [0x00, 0x48, 0x00]
+
+
+# ── Sensors (appear in Home Assistant) ────────────────────────────────────────
+sensor:
+  - platform: wifi_signal
+    name: "Train Guard WiFi Signal"
+    update_interval: 60s
+
+text_sensor:
+  - platform: wifi_info
+    ip_address:
+      name: "Train Guard IP"
+  - platform: template
+    name: "Train Status"
+    id: train_status_text
+    lambda: |-
+      if (!id(train_connected)) return {"⚠️ Not connected"};
+      if (id(zone_active))      return {"🛑 Stopped (zone active)"};
+      return {"✅ Running"};
+    update_interval: 2s
+
+
+# ── Status LED (optional — connect LED + 220Ω to GPIO2) ─────────────────────
+light:
+  - platform: binary
+    name: "Status LED"
+    id: status_led
+    output: led_output
+    effects:
+      - automation:
+          name: "Blink Fast"
+          sequence:
+            - light.turn_on: status_led
+            - delay: 200ms
+            - light.turn_off: status_led
+            - delay: 200ms
+
+output:
+  - platform: gpio
+    pin: GPIO2          # Built-in LED on most ESP32 DevKit boards
+    id: led_output

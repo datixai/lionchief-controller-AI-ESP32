@@ -1,0 +1,65 @@
+# ── Python ─────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyo
+*.pyd
+.Python
+
+# Virtual environments — NEVER commit these
+venv/
+.venv/
+env/
+ENV/
+.env/
+virtualenv/
+.virtualenv/
+
+# ── Secrets & Config ───────────────────────────────────────────────────────────
+.env                        # real .env with MAC address / passwords
+esp32/esphome/secrets.yaml  # real ESPHome secrets
+
+# ── AI Models — large files, don't commit to GitHub ───────────────────────────
+models/*.pt                 # PyTorch model weights
+models/*.pth
+models/*.onnx
+models/*.tflite
+models/best_ncnn_model/     # NCNN model folder
+models/*.bin
+models/*.param
+
+# Training outputs (from Ultralytics / Colab)
+runs/
+*.cache
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/settings.json
+.vscode/launch.json
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── Build artifacts ───────────────────────────────────────────────────────────
+dist/
+build/
+*.egg-info/
+*.egg
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Reference repos (cloned locally, not for distribution) ───────────────────
+refs/
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+*.DS_Store
+*.tmp
+*.bak
+*.orig
