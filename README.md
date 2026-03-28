@@ -1,6 +1,6 @@
-# 🚂 Harry Locomotive — Collision Prevention System
+# 🚂 LionChief Collision Prevention System
 
-Automated collision prevention for Lionel LionChief O-scale model train layout.
+Automated collision prevention for a Lionel LionChief O-scale model train layout.
 Two trains share a 3-foot section of track. This system detects when the inner
 loop train enters the shared section and automatically stops the outer loop train
 via Bluetooth (BLE), then resumes it when the track clears.
@@ -10,7 +10,8 @@ via Bluetooth (BLE), then resumes it when the track clears.
 ## 📁 Project Structure
 
 ```
-harry_locomotive/
+lionchief-controller-AI-ESP32/
+│
 ├── esp32/
 │   ├── esphome/
 │   │   ├── train_controller.yaml      ← Flash to ESP32 via ESPHome
@@ -48,7 +49,8 @@ harry_locomotive/
 ├── docs/
 │   └── wiring_diagram.md              ← Pin connections + track layout
 │
-└── .gitignore
+├── .gitignore
+└── README.md
 ```
 
 ---
@@ -59,8 +61,8 @@ harry_locomotive/
 
 ```bash
 # 1. Clone repo
-git clone https://github.com/YOUR_USERNAME/harry-locomotive.git
-cd harry-locomotive/raspberry_pi
+git clone https://github.com/datixai/lionchief-controller-AI-ESP32.git
+cd lionchief-controller-AI-ESP32/raspberry_pi
 
 # 2. Create virtual environment
 python -m venv venv
@@ -88,7 +90,7 @@ python mock_train.py
 # 1. Install all dependencies
 pip install -r requirements.txt
 
-# 2. Find Peter's train MAC address
+# 2. Find the train MAC address
 python scan_train.py
 # → copy the MAC address shown
 
@@ -98,13 +100,13 @@ python scan_train.py
 
 # 4. Calibrate the shared zone
 python calibrate_zone.py
-# → click and drag over the shared track section in the camera window
+# → click and drag over the shared track section in camera window
 # → press S to save
 
 # 5. Run the system (mock mode first)
 python main.py --mock
 
-# 6. When ready with real model, switch model type
+# 6. When ready with trained model, switch model type
 #    Set MODEL_TYPE = "yolo_ncnn" in config.py
 #    Copy models/best_ncnn_model/ from your Colab training
 python main.py
@@ -122,10 +124,10 @@ pip install esphome
 
 # 2. Copy and fill in secrets
 cp esp32/esphome/secrets.yaml.example esp32/esphome/secrets.yaml
-# Edit secrets.yaml with Peter's WiFi credentials
+# Edit secrets.yaml with WiFi credentials
 
 # 3. Edit train_controller.yaml
-#    Replace XX:XX:XX:XX:XX:XX with Peter's train MAC address
+#    Replace XX:XX:XX:XX:XX:XX with the train's MAC address
 
 # 4. Flash to ESP32 (connect via USB)
 cd esp32/esphome
@@ -145,22 +147,20 @@ esphome run train_controller.yaml
 
 ## 🔑 Confirmed Train BLE Details
 
-Peter's train has been identified:
-
 | Setting | Value |
 |---------|-------|
 | Service UUID | `e20a39f4-73f5-4bc4-a12f-17d1ad07a961` ✅ |
 | Characteristic UUID | `08590f7e-db05-467e-8757-72f6faeb13d4` ✅ |
-| MAC Address | **Still needed** — Peter uses nRF Connect app |
+| MAC Address | Find using nRF Connect app (see below) |
 
-**How Peter finds the MAC:**
-1. Download **nRF Connect** (free, Google Play / App Store)
+**How to find the MAC address:**
+1. Download **nRF Connect** (free — Google Play / App Store)
 2. Power on the train
 3. Tap Scan
 4. Find "LionChief" in the list
 5. Copy the MAC address (format: `AA:BB:CC:DD:EE:FF`)
 
-Or run:
+Or run this directly from Raspberry Pi:
 ```bash
 python raspberry_pi/scan_train.py
 ```
@@ -169,58 +169,50 @@ python raspberry_pi/scan_train.py
 
 ## 🤖 Training the AI Model
 
-Since hardware is in the US and you're in Pakistan, train the model remotely:
+Hardware is with the client — train the model remotely using YouTube footage:
 
 ### Step 1 — Collect Training Data (No Train Needed)
 
 ```bash
-# Install yt-dlp
 pip install yt-dlp
-
-# Download Lionel LionChief running video from YouTube
 yt-dlp "https://www.youtube.com/results?search_query=lionel+lionchief+O+scale+running" -o train_video.mp4
-
-# Extract frames (2 per second)
 ffmpeg -i train_video.mp4 -vf fps=2 frames/frame_%04d.jpg
 ```
 
-### Step 2 — Label Images
+### Step 2 — Label Images on Roboflow
 
 1. Go to [roboflow.com](https://roboflow.com) → Create free account
-2. New Project → Object Detection → Upload your frames
+2. New Project → Object Detection → Upload frames
 3. Draw bounding boxes around the train → label as `train`
-4. Apply augmentations (flip, brightness) to multiply dataset
-5. Export as **YOLOv8 PyTorch** format → copy the snippet
+4. Apply augmentations → Export as **YOLOv8 PyTorch** format
 
 ### Step 3 — Train on Google Colab (Free GPU)
 
 Open: [YOLOv8 Training Notebook](https://colab.research.google.com/github/roboflow-ai/notebooks/blob/main/notebooks/train-yolov8-object-detection-on-custom-dataset.ipynb)
 
 ```python
-# Paste your Roboflow snippet, then:
 from ultralytics import YOLO
 
-model = YOLO('yolov8n.pt')          # nano = fastest on Pi
+model = YOLO('yolov8n.pt')   # nano — fastest on Raspberry Pi
 model.train(
     data='dataset/data.yaml',
     epochs=100,
     imgsz=640,
     batch=16,
 )
-# Download runs/detect/train/weights/best.pt
+# Download: runs/detect/train/weights/best.pt
 ```
 
 ### Step 4 — Convert for Raspberry Pi
 
 ```python
-# Run in Colab before downloading
 model = YOLO('best.pt')
 model.export(format='ncnn', imgsz=320)   # creates best_ncnn_model/
 ```
 
 ### Step 5 — Deploy
 
-1. Copy `best_ncnn_model/` folder to `harry-locomotive/models/`
+1. Copy `best_ncnn_model/` into `models/`
 2. Set `MODEL_TYPE = "yolo_ncnn"` in `config.py`
 3. Run `python main.py`
 
@@ -228,9 +220,9 @@ model.export(format='ncnn', imgsz=320)   # creates best_ncnn_model/
 
 ## 📐 Wiring
 
-See **[docs/wiring_diagram.md](docs/wiring_diagram.md)** for full ASCII wiring diagrams.
+See **[docs/wiring_diagram.md](docs/wiring_diagram.md)** for full diagrams and track layout.
 
-**Quick reference:**
+**Quick reference — ESP32 pin connections:**
 
 | ESP32 Pin | Connects To |
 |-----------|-------------|
@@ -239,7 +231,7 @@ See **[docs/wiring_diagram.md](docs/wiring_diagram.md)** for full ASCII wiring d
 | 3.3V | IR Sensor VCC |
 | GND | IR Sensor GND |
 | GPIO2 | Status LED (built-in) |
-| GPIO0 | Emergency stop button (boot btn) |
+| GPIO0 | Emergency stop (boot button) |
 
 ---
 
@@ -257,6 +249,7 @@ tests/test_commands.py::TestCommandBytes::test_stop_command PASSED
 tests/test_commands.py::TestUUIDs::test_service_uuid_matches_peter_train PASSED
 tests/test_zone_manager.py::TestZone::test_detection_fully_inside_zone PASSED
 ...
+28 passed in 0.66s
 ```
 
 ---
@@ -267,11 +260,11 @@ All settings are in `raspberry_pi/config.py`:
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `TRAIN_MAC_ADDRESS` | `""` | Peter's train MAC (required for real use) |
+| `TRAIN_MAC_ADDRESS` | `""` | Train MAC address (required for real use) |
 | `MODEL_TYPE` | `"mock"` | `yolo` / `yolo_ncnn` / `tflite` / `mock` |
-| `RESUME_SPEED` | `7` | Speed (0–31) after zone clears |
+| `RESUME_SPEED` | `7` | Speed (0–31) to resume after zone clears |
 | `RESUME_DELAY` | `2.5` | Seconds to wait before resuming |
-| `SHARED_ZONE` | `(150,150,490,330)` | Pixel coords — use calibrate_zone.py |
+| `SHARED_ZONE` | `(150,150,490,330)` | Pixel coords — set via `calibrate_zone.py` |
 | `CAMERA_INDEX` | `0` | USB camera device index |
 | `DETECTION_CONFIDENCE` | `0.50` | Minimum detection confidence |
 | `SHOW_DISPLAY` | `True` | Show live camera window |
@@ -280,7 +273,7 @@ All settings are in `raspberry_pi/config.py`:
 
 ## 📦 LionChief BLE Command Reference
 
-All commands send to Characteristic UUID `08590f7e-db05-467e-8757-72f6faeb13d4`:
+All commands write to Characteristic UUID `08590f7e-db05-467e-8757-72f6faeb13d4`:
 
 | Command | Bytes | Description |
 |---------|-------|-------------|
@@ -288,20 +281,17 @@ All commands send to Characteristic UUID `08590f7e-db05-467e-8757-72f6faeb13d4`:
 | Speed (0–31) | `[0x00, 0x45, 0x00–0x1F]` | Set speed |
 | Forward | `[0x00, 0x46, 0x01]` | Set direction |
 | Reverse | `[0x00, 0x46, 0x02]` | Set direction |
-| Bell ON | `[0x00, 0x47, 0x01]` | Ring bell |
-| Bell OFF | `[0x00, 0x47, 0x00]` | |
-| Horn ON | `[0x00, 0x48, 0x01]` | Blow horn |
-| Horn OFF | `[0x00, 0x48, 0x00]` | |
-| Lights ON | `[0x00, 0x51, 0x01]` | Headlights |
-| Lights OFF | `[0x00, 0x51, 0x00]` | |
-| Speak | `[0x00, 0x4D, 0x00, 0x00]` | Random phrase |
+| Bell ON/OFF | `[0x00, 0x47, 0x01/0x00]` | Ring bell |
+| Horn ON/OFF | `[0x00, 0x48, 0x01/0x00]` | Blow horn |
+| Lights ON/OFF | `[0x00, 0x51, 0x01/0x00]` | Headlights |
+| Speak | `[0x00, 0x4D, 0x00, 0x00]` | Random conductor phrase |
 | Volume | `[0x00, 0x4C, 0x00–0x07]` | Master volume |
 
-*Protocol reverse-engineered by Property404 — github.com/Property404/lionchief-controller*
+*Protocol reverse-engineered by [Property404](https://github.com/Property404/lionchief-controller)*
 
 ---
 
-## 🔗 Key Reference Repositories
+## 🔗 Reference Repositories
 
 | Repo | Purpose |
 |------|---------|
@@ -319,26 +309,26 @@ All commands send to Characteristic UUID `08590f7e-db05-467e-8757-72f6faeb13d4`:
 ## 🗓 Development Roadmap
 
 - [x] BLE command library (all commands verified)
-- [x] Async controller with auto-reconnect
+- [x] Async BLE controller with auto-reconnect
 - [x] YOLO / TFLite / Mock detector
 - [x] Zone detection logic
 - [x] ESP32 ESPHome YAML
 - [x] ESP32 Arduino C++
-- [x] Mock simulation
-- [x] Unit tests
-- [ ] Peter sends MAC address → update `config.py`
+- [x] Mock simulation (no hardware needed)
+- [x] Unit tests — 28/28 passing
+- [ ] Get train MAC address → update `config.py`
 - [ ] Collect YouTube frames → label on Roboflow
-- [ ] Train YOLOv8n on Colab → download best.pt
-- [ ] Export to NCNN → deploy on Pi
-- [ ] Peter mounts IR sensors → flash ESP32
+- [ ] Train YOLOv8n on Colab → download `best.pt`
+- [ ] Export to NCNN → copy to `models/`
+- [ ] Mount IR sensors → flash ESP32
 - [ ] Full integration test on real layout
 
 ---
 
 ## 👨‍💻 Developer Notes
 
-- The train **does not verify the checksum** — so `[0x00, 0x45, 0x00]` is all you need to stop it
-- BLE max 3 connections per ESP32 — don't add more `ble_client` blocks
-- Use `MODEL_TYPE = "mock"` for all development until hardware arrives
-- The `mock_train.py` script runs the full collision logic without any hardware
-- Run `pytest tests/` before committing to verify nothing broke
+- The train **does not verify the checksum** — `[0x00, 0x45, 0x00]` is all you need to stop it
+- ESP32 supports max **3 BLE connections** — do not add more `ble_client` blocks
+- Use `MODEL_TYPE = "mock"` for all development until hardware is available
+- `mock_train.py` runs the full collision logic with zero hardware
+- Run `pytest tests/` before every commit to verify nothing broke
