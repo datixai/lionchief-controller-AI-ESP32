@@ -589,12 +589,12 @@ tests/test_zone_manager.py::TestZone::test_train_inside_zone   PASSED
 
 ### Pending ⏳
 
-- [ ] Peter scans train MAC on Android nRF Connect → update config.py
-- [ ] Peter mounts IR sensors at Point A and Point B on track
+- [ ]  Scans train MAC on Android nRF Connect → update config.py
+- [ ]  mounts IR sensors at Point A and Point B on track
 - [ ] Flash ESP32 → test BLE STOP/RESUME on real train
 - [ ] Mount USB webcam above layout → run calibrate_zone.py
 - [ ] Test laptop_cv real-time detection with real trains running
-- [ ] Peter records 15-20 minutes of layout footage (both trains)
+- [ ]  records 15-20 minutes of layout footage (both trains)
 - [ ] Extract frames → label on Roboflow → train YOLOv11n on Colab
 - [ ] Export NCNN model → deploy on Raspberry Pi 5
 - [ ] Full integration test — all three systems on real layout
