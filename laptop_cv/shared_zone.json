@@ -1,12 +1,12 @@
 {
-  "x1": 144,
-  "y1": 127,
-  "x2": 979,
-  "y2": 218,
+  "x1": 494,
+  "y1": 366,
+  "x2": 696,
+  "y2": 688,
   "frame_width": 1280,
   "frame_height": 720,
-  "zone_width": 835,
-  "zone_height": 91,
-  "saved_at": "2026-03-29 15:28:47",
+  "zone_width": 202,
+  "zone_height": 322,
+  "saved_at": "2026-03-30 16:06:46",
   "note": "Shared track section \u2014 both trains use this zone"
 }

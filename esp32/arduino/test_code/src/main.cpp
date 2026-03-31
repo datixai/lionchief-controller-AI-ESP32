@@ -10,7 +10,8 @@
 // ── BLE UUIDs ────────────────────────────────────────────────
 #define SERVICE_UUID        "e20a39f4-73f5-4bc4-a12f-17d1ad07a961"
 #define CHARACTERISTIC_UUID "08590f7e-db05-467e-8757-72f6faeb13d4"
-#define TRAIN_NAME          "LC0"
+#define TRAIN_NAME          "LC015556-99F0"
+#define TARGET_MAC "CC:01:78:D0:F0:99"
 
 // ── ALL LIONCHIEF COMMANDS ───────────────────────────────────
 // Speed commands (0=stop, 1-7=speed levels)

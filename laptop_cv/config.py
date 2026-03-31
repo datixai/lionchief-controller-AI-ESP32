@@ -7,8 +7,8 @@
 
 # ── TRAIN BLE ─────────────────────────────────────────────────────
 # Peter's train MAC address — leave empty to auto-find by name
-TRAIN_MAC  = ""
-TRAIN_NAME = "LC0"
+TRAIN_MAC  = "CC:01:78:D0:F0:99"
+TRAIN_NAME = "LC015556-99F0"
 
 # LionChief BLE UUIDs (confirmed by Peter's nRF Connect scan)
 SERVICE_UUID        = "e20a39f4-73f5-4bc4-a12f-17d1ad07a961"
