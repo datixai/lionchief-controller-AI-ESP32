@@ -1,25 +1,27 @@
 # ══════════════════════════════════════════════════════════════════
-#  main.py  —  LionChief Laptop CV — Entry Point
+#  main.py  —  LionChief Laptop CV  —  Entry Point
 #
-#  Collision prevention using laptop camera only.
-#  No ESP32. No Raspberry Pi. Just laptop + USB camera + train.
+#  Collision prevention using laptop + USB webcam only.
+#  No ESP32. No Raspberry Pi. Laptop sends BLE directly to train.
 #
-#  HOW TO USE:
+#  HOW TO RUN:
 #    Step 1:  pip install -r requirements.txt
-#    Step 2:  python calibrate_zone.py   (do this ONCE)
-#    Step 3:  paste zone coords into config.py
-#    Step 4:  python main.py
+#    Step 2:  python calibrate_zone.py    (once — draws shared zone)
+#    Step 3:  python main.py
 #
-#  CONTROLS (press in camera window):
-#    Q / ESC = quit
-#    P       = pause / resume detection
-#    S       = manually send STOP to train
-#    R       = manually send RESUME to train
-#    H       = horn
-#    B       = bell toggle
-#    +       = speed up
-#    -       = speed down
-#    C       = show calibration overlay
+#  KEYBOARD CONTROLS (click camera window first):
+#    Q / ESC  = Quit
+#    P        = Pause / resume detection
+#    S        = Manual STOP train
+#    R        = Manual RESUME train
+#    H        = Horn
+#    B        = Bell toggle
+#    L        = Lights toggle
+#    A        = Announce / speech
+#    + / =    = Speed up
+#    -        = Speed down
+#    F        = Forward
+#    V        = Reverse
 # ══════════════════════════════════════════════════════════════════
 
 import cv2
@@ -32,7 +34,7 @@ import config
 from zone_detector  import ZoneDetector
 from ble_controller import TrainBLEController
 
-# ── LOGGING SETUP ─────────────────────────────────────────────────
+# ── Logging ───────────────────────────────────────────────────────
 handlers = [logging.StreamHandler(sys.stdout)]
 if config.LOG_TO_FILE:
     handlers.append(logging.FileHandler(config.LOG_FILE_PATH))
@@ -47,31 +49,28 @@ logger = logging.getLogger("Main")
 
 
 def print_banner():
+    mac_mode = f"MAC: {config.TRAIN_MAC}" if config.TRAIN_MAC \
+               else f"Auto-scan: name prefix '{config.TRAIN_NAME}'"
     print("\n╔══════════════════════════════════════════════════╗")
     print("║   LionChief Collision Prevention — Laptop CV    ║")
     print("╠══════════════════════════════════════════════════╣")
-    print("║  Camera → OpenCV Zone Detection → BLE → Train   ║")
-    print("║  No ESP32. No Raspberry Pi. Laptop only.         ║")
+    print(f"║  BLE: {mac_mode:<44}║")
     print("╠══════════════════════════════════════════════════╣")
-    print("║  KEYS (click camera window first):              ║")
-    print("║   Q/ESC = Quit                                   ║")
-    print("║   P     = Pause/Resume detection                 ║")
-    print("║   S     = Manual STOP train                      ║")
-    print("║   R     = Manual RESUME train                    ║")
-    print("║   H     = Horn                                    ║")
-    print("║   B     = Bell toggle                             ║")
-    print("║   + / - = Speed up / down                        ║")
+    print("║  KEYS  Q=Quit  P=Pause  S=Stop  R=Resume        ║")
+    print("║        H=Horn  B=Bell   L=Lights A=Announce     ║")
+    print("║        F=Fwd   V=Rev    +/-=Speed                ║")
     print("╚══════════════════════════════════════════════════╝\n")
 
 
 def main():
     print_banner()
 
-    # ── INIT COMPONENTS ───────────────────────────────────────────
+    # ── Start BLE controller (connects in background) ──────────────
     logger.info("Starting BLE controller...")
     ble = TrainBLEController()
     ble.start()
 
+    # ── Start zone detector (opens camera) ─────────────────────────
     logger.info("Starting zone detector...")
     detector = ZoneDetector()
     try:
@@ -81,139 +80,128 @@ def main():
         ble.shutdown()
         sys.exit(1)
 
-    # ── STATE ─────────────────────────────────────────────────────
-    zone_was_active  = False      # previous frame state
-    zone_active      = False      # current frame state
-    paused           = False      # P key toggles
-    resume_timer     = None       # when zone cleared
-    bell_on          = False
-    current_speed    = 4          # default medium speed
-    stop_count       = 0
-    resume_count     = 0
-    start_time       = time.time()
+    # ── State ───────────────────────────────────────────────────────
+    zone_was_active = False
+    paused          = False
+    resume_timer    = None
+    bell_state      = False
+    lights_state    = False
+    current_speed   = 4
+    stop_count      = 0
+    resume_count    = 0
+    start_time      = time.time()
 
-    logger.info("System running — monitoring shared zone...\n")
+    logger.info("Monitoring started — watching shared zone...\n")
 
-    # ── MAIN LOOP ─────────────────────────────────────────────────
+    # ── Main loop ───────────────────────────────────────────────────
     while True:
         frame, detected, contours = detector.read_frame()
 
         if frame is None:
-            logger.warning("No frame — camera issue?")
-            time.sleep(0.1)
+            time.sleep(0.05)
             continue
 
+        # ── Collision logic ─────────────────────────────────────────
         if not paused:
-            # ── COLLISION LOGIC ───────────────────────────────────
-            #
-            # Train ENTERS zone → STOP immediately
+
+            # Train enters zone → STOP
             if detected and not zone_was_active:
-                zone_active = True
                 resume_timer = None
                 ble.stop_train()
                 stop_count += 1
-                logger.info(f"⚠️  TRAIN IN SHARED ZONE — STOP sent "
-                            f"(stop #{stop_count})")
+                logger.info(f"TRAIN IN ZONE — STOP sent (#{stop_count})")
 
-            # Train CLEARS zone → start safety timer
+            # Train leaves zone → start safety timer
             if not detected and zone_was_active:
                 resume_timer = time.time()
-                logger.info(f"✅ Zone cleared — {config.RESUME_DELAY_SECONDS}s "
-                            f"safety delay...")
+                logger.info(
+                    f"Zone cleared — waiting {config.RESUME_DELAY_SECONDS}s...")
 
             # Safety timer expired → RESUME
-            if (resume_timer and
-                    (time.time() - resume_timer) >= config.RESUME_DELAY_SECONDS):
-                zone_active = False
+            if resume_timer and \
+                    (time.time() - resume_timer) >= config.RESUME_DELAY_SECONDS:
                 resume_timer = None
                 ble.resume_train()
                 resume_count += 1
-                logger.info(f"✅ RESUME sent (resume #{resume_count})")
+                logger.info(f"RESUME sent (#{resume_count})")
 
             zone_was_active = detected
 
-        # ── OVERLAY STATS ─────────────────────────────────────────
+        # ── Stats overlay ───────────────────────────────────────────
         if config.SHOW_VIDEO and frame is not None:
-            h, w = frame.shape[:2]
+            h, w    = frame.shape[:2]
             elapsed = int(time.time() - start_time)
             mm, ss  = elapsed // 60, elapsed % 60
 
-            # Stats box bottom right
             stats = [
-                f"BLE: {'Connected' if ble.connected else 'Searching...'}",
-                f"Stops: {stop_count}   Resumes: {resume_count}",
+                f"BLE: {'Connected' if ble.connected else 'Connecting...'}",
+                f"Stops:{stop_count}  Resumes:{resume_count}",
                 f"Speed: {current_speed}/7",
-                f"Runtime: {mm:02d}:{ss:02d}",
-                "PAUSED" if paused else "",
+                f"Time: {mm:02d}:{ss:02d}",
+                "--- PAUSED ---" if paused else "",
             ]
-            box_x = w - 260
-            cv2.rectangle(frame, (box_x, h - 110), (w - 5, h - 5),
+            box_x = w - 265
+            cv2.rectangle(frame, (box_x, h - 115), (w - 4, h - 4),
                           (30, 30, 30), -1)
             for i, s in enumerate(stats):
                 if s:
-                    col = (0, 100, 255) if s == "PAUSED" else (200, 200, 200)
-                    cv2.putText(frame, s, (box_x + 6, h - 90 + i * 18),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.45, col, 1)
+                    col = (0, 80, 255) if "PAUSED" in s else (200, 200, 200)
+                    cv2.putText(frame, s, (box_x + 6, h - 95 + i * 20),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.44, col, 1)
 
             cv2.imshow(config.WINDOW_TITLE, frame)
 
-        # ── KEY HANDLING ──────────────────────────────────────────
+        # ── Key handling ────────────────────────────────────────────
         key = cv2.waitKey(1) & 0xFF
 
-        if key in (ord('q'), ord('Q'), 27):          # Q / ESC
+        if key in (ord('q'), ord('Q'), 27):
             break
-
-        elif key in (ord('p'), ord('P')):             # Pause
+        elif key in (ord('p'), ord('P')):
             paused = not paused
-            logger.info(f"Detection {'PAUSED' if paused else 'RESUMED'}")
-
-        elif key in (ord('s'), ord('S')):             # Manual stop
+            logger.info("Detection " + ("PAUSED" if paused else "RESUMED"))
+        elif key in (ord('s'), ord('S')):
             ble.stop_train()
-            logger.info("Manual STOP sent")
-
-        elif key in (ord('r'), ord('R')):             # Manual resume
+            logger.info("Manual STOP")
+        elif key in (ord('r'), ord('R')):
             ble.resume_train()
-            zone_active = zone_was_active = False
+            zone_was_active = False
             resume_timer = None
-            logger.info("Manual RESUME sent")
-
-        elif key in (ord('h'), ord('H')):             # Horn
+            logger.info("Manual RESUME")
+        elif key in (ord('h'), ord('H')):
             ble.horn()
-
-        elif key in (ord('b'), ord('B')):             # Bell
-            if bell_on:
-                ble.bell_off()
-                bell_on = False
-            else:
-                ble.bell_on()
-                bell_on = True
-
-        elif key in (ord('+'), ord('='),              # Speed up
-                     0x57, 0x2B):
+        elif key in (ord('b'), ord('B')):
+            bell_state = not bell_state
+            ble.bell_on() if bell_state else ble.bell_off()
+        elif key in (ord('l'), ord('L')):
+            lights_state = not lights_state
+            ble.lights_on() if lights_state else ble.lights_off()
+        elif key in (ord('a'), ord('A')):
+            ble.announce()
+        elif key in (ord('f'), ord('F')):
+            ble.forward()
+        elif key in (ord('v'), ord('V')):
+            ble.reverse()
+        elif key in (ord('+'), ord('=')):
             current_speed = min(7, current_speed + 1)
             ble.set_speed(current_speed)
             logger.info(f"Speed → {current_speed}")
-
-        elif key in (ord('-'), ord('_')):             # Speed down
+        elif key in (ord('-'), ord('_')):
             current_speed = max(0, current_speed - 1)
             ble.set_speed(current_speed)
             logger.info(f"Speed → {current_speed}")
 
-    # ── CLEANUP ───────────────────────────────────────────────────
+    # ── Shutdown ────────────────────────────────────────────────────
     logger.info("Shutting down...")
     ble.stop_train()
-    time.sleep(0.5)
+    time.sleep(0.4)
     ble.shutdown()
     detector.stop()
 
-    print("\n╔══════════════════════════════════════════════════╗")
-    print("║  Session Summary                                 ║")
-    print(f"║  Total stops:   {stop_count:<32} ║")
-    print(f"║  Total resumes: {resume_count:<32} ║")
     elapsed = int(time.time() - start_time)
-    print(f"║  Runtime:       {elapsed // 60:02d}m {elapsed % 60:02d}s"
-          f"{'':25} ║")
-    print("╚══════════════════════════════════════════════════╝\n")
+    print(f"\n{'='*52}")
+    print(f"  Session: {elapsed//60:02d}m{elapsed%60:02d}s  "
+          f"Stops: {stop_count}  Resumes: {resume_count}")
+    print(f"{'='*52}\n")
 
 
 if __name__ == "__main__":
