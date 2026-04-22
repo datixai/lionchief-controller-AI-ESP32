@@ -1,5 +1,5 @@
 # LionChief Laptop CV — Python dependencies
-# Install with:  pip install -r requirements.txt
+# Install: pip install -r requirements.txt
 
 opencv-python>=4.8.0
 bleak>=0.21.1
