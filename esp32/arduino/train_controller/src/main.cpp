@@ -2,87 +2,90 @@
  * ═══════════════════════════════════════════════════════════════════════════
  *  train_controller/src/main.cpp
  *  Harry Locomotive Project — Autonomous Collision Prevention System
- *  Datix AI  |  Ahmed Ali  |  v5.0  |  May 2026
+ *  Datix AI  |  Ahmed Ali  |  v5.1  |  May 2026
  *
- * ─── WHAT CHANGED IN v5 ────────────────────────────────────────────────────
+ * ─── CHANGES IN v5.1 ───────────────────────────────────────────────────────
  *
- *  1. INNER TRAIN — ONE LOOP THEN AUTO STOP
- *     Inner train is OFF by default. Press X to run one loop.
- *     After Sensor C fires (inner exits shared section), a configurable
- *     PARKING_DELAY_MS counts down, then relay cuts power automatically.
- *     Inner train stops at parking position. Does not run again until X pressed.
+ *  1. RESUME AT USER-SET SPEED (not hardcoded slow speed)
+ *     Before any STOP is sent, the current speed is saved as userSetSpeed.
+ *     When outer train resumes after collision prevention, it returns to
+ *     exactly the speed the user had set — not a fixed slow speed.
+ *     Example: user sets speed 5, train stops for inner loop, resumes at 5.
  *
- *  2. INNER TRAIN BLOCKED IF OUTER IS IN SHARED SECTION
- *     Pressing X while zone is active prints a warning and does nothing.
- *     Inner train only starts when zone is completely clear (STATE_IDLE).
+ *  2. INNER TRAIN AUTO-LOOP EVERY 30 SECONDS
+ *     Inner train no longer requires manual X press.
+ *     Every AUTO_INNER_INTERVAL_MS (default 30s), if:
+ *       - Zone is clear (STATE_IDLE)
+ *       - Outer BLE train is NOT in shared section
+ *       - Inner train is not already running
+ *     → Inner train automatically gets power, runs one loop, parks.
+ *     X key still works for immediate manual trigger.
+ *     Interval is configurable at the top of this file.
  *
- *  3. TRACK SWITCH PULSE — ONLY FOR OUTER TRAIN EXIT
- *     Relay 2 (GPIO19) now ONLY pulses when the OUTER train (Sensor B)
- *     triggered the lock and has exited. Inner train exit does NOT pulse
- *     the track switch (Peter confirmed this is correct).
+ *  3. KEEPALIVE BUG FIXED
+ *     Keepalive now only sends if currentSpeed > 0.
+ *     Previously sending speed 0 during keepalive was silently stopping
+ *     the outer train every 20 seconds.
  *
- *  4. RELAY BOOT FIX
- *     Both relay pins are set HIGH (released) as the very first lines
- *     in setup(), before Serial.begin() even runs. This prevents the
- *     brief GPIO float that was energizing relays at power-on.
- *
- *  5. INNER TRAIN POWER RESTORED AFTER OUTER EXIT
- *     If the outer train entered the zone while the inner train was
- *     running (cut its power), inner train power is automatically
- *     restored after the outer train exits and switch pulse completes.
+ *  4. GPIO CORRECTED — Peter's confirmed wiring
+ *     RELAY_POWER_PIN  = GPIO19 (Peter has inner train power here)
+ *     RELAY_SWITCH_PIN = GPIO18 (track switch — not yet connected)
  *
  * ─── STATE MACHINE (6 states) ──────────────────────────────────────────────
  *
- *   ┌──────────────────────────────────────────────────────────────────────┐
- *   │                                                                      │
- *   │  IDLE ──[SensorA]──► LOCKED(inner) ──[SensorC]──► INNER_PARKING    │
- *   │    │                                                      │          │
- *   │    │                                             [parking delay]     │
- *   │    │                                                      ▼          │
- *   │    │                                                   DELAY         │
- *   │    │                                                      │          │
- *   │    └──[SensorB]──► LOCKED(outer) ──[SensorC]──► DELAY   │          │
- *   │                                                      │    │          │
- *   │                                             [outer only] │          │
- *   │                                                      ▼    ▼          │
- *   │              IDLE ◄── RAMP ◄── SWITCH_PULSE ◄──────────────        │
- *   │                                                                      │
- *   └──────────────────────────────────────────────────────────────────────┘
+ *   IDLE ──[SensorA]──► LOCKED ──[SensorC]──► INNER_PARKING ──► DELAY ──►
+ *   IDLE ──[SensorB]──► LOCKED ──[SensorC]──► DELAY ──► SWITCH_PULSE ──►
+ *   Both paths → RAMP → IDLE
  *
  *   STATE_IDLE           Outer running, inner parked — monitoring sensors
- *   STATE_LOCKED         Zone occupied — outer stopped OR inner power cut
- *   STATE_INNER_PARKING  Inner exited zone — counting down to parking stop
+ *   STATE_LOCKED         Zone occupied — collision prevention active
+ *   STATE_INNER_PARKING  Inner exited — coasting to parking position
  *   STATE_DELAY          Safety buffer before resuming outer train
  *   STATE_SWITCH_PULSE   1s relay pulse resets track switch (outer exit only)
- *   STATE_RAMP           Outer train ramping slow → full speed
+ *   STATE_RAMP           Outer train ramping back to user-set speed
  *
- * ─── WIRING (unchanged from v4) ────────────────────────────────────────────
+ * ─── COMPLETE PIN ASSIGNMENTS ──────────────────────────────────────────────
  *
- *   GPIO16 → Sensor A  (inner loop entry — inner train only)
- *   GPIO15 → Sensor B  (outer loop entry — outer train only)
- *   GPIO17 → Sensor C  (shared section exit — any train)
- *   GPIO18 → Relay 1   (inner train track power — NC terminal)
- *   GPIO19 → Relay 2   (track switch 1s pulse — NO terminal)
- *   VIN    → All sensor VCC + both relay VCC
- *   GND    → All sensor GND + both relay GND
- *   GPIO2  → Built-in status LED
+ *   GPIO15 → Sensor B  black wire  Outer loop entry — only outer train passes
+ *   GPIO16 → Sensor A  black wire  Inner loop entry — only inner train passes
+ *   GPIO17 → Sensor C  black wire  Shared section exit — any train
+ *   GPIO18 → Relay 2   IN pin      Track switch 1s pulse (not yet connected)
+ *   GPIO19 → Relay 1   IN pin      Inner train track power (Peter confirmed)
+ *   GPIO2  → Built-in LED          Status indicator — no external wiring
+ *   VIN    → All 3 sensors VCC     5V power (brown wire on E18-D80NK)
+ *   VIN    → Relay 1 VCC           5V power
+ *   VIN    → Relay 2 VCC           5V power
+ *   GND    → All 3 sensors GND     Common ground (blue wire on E18-D80NK)
+ *   GND    → Relay 1 GND           Common ground
+ *   GND    → Relay 2 GND           Common ground
  *
- * ─── RELAY WIRING ──────────────────────────────────────────────────────────
+ * ─── RELAY WIRING DETAIL ───────────────────────────────────────────────────
  *
- *   Relay module = ACTIVE LOW (coil energizes when IN pin = LOW)
+ *   Both relays = standard Arduino module = ACTIVE LOW
+ *   HIGH = coil off = safe/default state
+ *   LOW  = coil on  = relay activates
  *
- *   Relay 1 — inner train power (NC terminal):
- *     HIGH = released = NC closed = power flows = train runs
- *     LOW  = energized = NC open  = power cut   = train stops
+ *   Relay 1 (GPIO19) — Inner train track power — uses NC terminal:
+ *     HIGH → NC closed → power flows    → inner train runs
+ *     LOW  → NC opens  → power cut      → inner train stops
  *
- *   Relay 2 — track switch (NO terminal, own 18V AC supply):
- *     HIGH = released = NO open   = switch untouched (default)
- *     LOW  = energized = NO closes = switch resets (1s pulse only)
+ *   Relay 2 (GPIO18) — Track switch reset — uses NO terminal:
+ *     HIGH → NO open   → switch idle    → default state
+ *     LOW  → NO closes → switch resets  → 1 second pulse only
+ *     Switch has its own 18V AC supply — relay just closes the circuit.
  *
- * ─── CONFIRMED BLE DETAILS ─────────────────────────────────────────────────
- *   MAC  : CC:01:78:D0:F0:99    Name: LC015556-99F0
- *   SVC  : e20a39f4-73f5-4bc4-a12f-17d1ad07a961
- *   CHAR : 08590f7e-db05-467e-8757-72f6faeb13d4
+ * ─── E18-D80NK SENSOR WIRING ───────────────────────────────────────────────
+ *
+ *   Brown wire → VIN (5V)
+ *   Blue wire  → GND
+ *   Black wire → GPIO signal pin
+ *   Output = HIGH when beam clear, LOW when beam broken (train detected)
+ *
+ * ─── BLE OUTER TRAIN ───────────────────────────────────────────────────────
+ *   MAC            : CC:01:78:D0:F0:99
+ *   Name           : LC015556-99F0
+ *   Service UUID   : e20a39f4-73f5-4bc4-a12f-17d1ad07a961
+ *   Characteristic : 08590f7e-db05-467e-8757-72f6faeb13d4
  *
  * ═══════════════════════════════════════════════════════════════════════════
  */
@@ -96,8 +99,7 @@
 #include <esp_task_wdt.h>
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  CONFIGURATION
-//  Adjust these values to tune system behaviour without changing logic.
+//  CONFIGURATION — only change values here, never touch logic below
 // ═══════════════════════════════════════════════════════════════════════════
 
 // BLE — outer LionChief train
@@ -106,12 +108,12 @@
 #define SERVICE_UUID        "e20a39f4-73f5-4bc4-a12f-17d1ad07a961"
 #define CHARACTERISTIC_UUID "08590f7e-db05-467e-8757-72f6faeb13d4"
 
-// GPIO — confirmed wiring from v4, unchanged
+// GPIO — Peter's confirmed wiring (v5.1 corrected)
 #define SENSOR_A_PIN     16   // Inner loop entry (inner train only)
 #define SENSOR_B_PIN     15   // Outer loop entry (outer train only)
 #define SENSOR_C_PIN     17   // Shared section exit (any train)
-#define RELAY_POWER_PIN  18   // Relay 1: inner train track power
-#define RELAY_SWITCH_PIN 19   // Relay 2: track switch 1s pulse
+#define RELAY_POWER_PIN  19   // Relay 1: inner train track power ← GPIO19 confirmed
+#define RELAY_SWITCH_PIN 18   // Relay 2: track switch 1s pulse   ← GPIO18 not yet connected
 #define STATUS_LED        2   // Built-in LED
 
 // Relay polarity — standard Arduino relay module is ACTIVE LOW
@@ -119,27 +121,33 @@
 #define RELAY_RELEASE   HIGH   // Coil OFF → NC closed / NO open (safe default)
 
 // ── Timing — all in milliseconds ───────────────────────────────────────────
-#define PARKING_DELAY_MS    2000   // ★ TUNE THIS: time inner train takes to
-                                   //   reach parking spot AFTER Sensor C fires.
-                                   //   Increase if train overshoots parking.
-                                   //   Decrease if train stops too early.
 
-#define RESUME_DELAY_MS     2000   // Safety buffer after zone clears
-#define SPEED_RAMP_MS       3000   // Time at slow speed before full speed
-#define STOP_REPEAT_MS       500   // Repeat BLE STOP every 500ms while locked
-#define SWITCH_PULSE_MS     1000   // Track switch relay pulse duration
-#define ZONE_TIMEOUT_MS    30000   // Max lock time — force resume if Sensor C fails
-#define SENSOR_DEBOUNCE_MS   300   // Min ms between same-sensor triggers
-#define BLE_RECONNECT_MS    5000   // BLE reconnect attempt interval
-#define BLE_KEEPALIVE_MS   20000   // BLE keepalive ping interval
-#define WATCHDOG_TIMEOUT_S    60   // Hardware WDT — resets ESP32 if loop hangs
+#define AUTO_INNER_INTERVAL_MS  30000  // ★ TUNE THIS: how often inner train
+                                       //   auto-runs. 30000 = every 30 seconds.
+                                       //   Change to 45000 for every 45 seconds.
+                                       //   Inner only starts if zone is clear.
 
-// Resume speed levels (0-7)
-#define RESUME_SLOW_SPEED   2      // Initial resume speed after stop
-#define RESUME_FULL_SPEED   7      // Full speed after ramp delay
+#define PARKING_DELAY_MS         2000  // ★ TUNE THIS: time inner train takes to
+                                       //   reach parking spot AFTER Sensor C.
+                                       //   Increase if it overshoots parking.
+                                       //   Decrease if it stops too early.
+
+#define RESUME_DELAY_MS          1500  // Safety buffer after zone clears
+#define SPEED_RAMP_MS            1500  // Time at medium speed before user speed
+#define STOP_REPEAT_MS            500  // Repeat BLE STOP every 500ms while locked
+#define SWITCH_PULSE_MS          1000  // Track switch relay pulse duration
+#define ZONE_TIMEOUT_MS         30000  // Force resume if Sensor C never fires
+#define SENSOR_DEBOUNCE_MS        300  // Min ms between same-sensor triggers
+#define BLE_RECONNECT_MS         5000  // BLE reconnect attempt interval
+#define BLE_KEEPALIVE_MS        20000  // BLE keepalive ping interval
+#define WATCHDOG_TIMEOUT_S          60 // Hardware WDT reset timeout
+
+// Speed levels (0-7)
+#define DEFAULT_OUTER_SPEED       7   // Speed outer train starts at on boot
+#define RESUME_RAMP_SPEED         5   // Intermediate speed during ramp-up
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  BLE COMMANDS — all confirmed on Peter's actual LionChief locomotive
+//  BLE COMMANDS — confirmed on Peter's LionChief locomotive via nRF Connect
 // ═══════════════════════════════════════════════════════════════════════════
 
 uint8_t CMD_STOP[]     = {0x00, 0x45, 0x00};
@@ -163,22 +171,22 @@ uint8_t CMD_SOUND_OFF[]= {0x00, 0x4C, 0x00};
 uint8_t CMD_ANNOUNCE[] = {0x00, 0x4D, 0x00, 0x00};
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  ERROR CODES — every failure has a unique searchable label
+//  ERROR CODES
 // ═══════════════════════════════════════════════════════════════════════════
 
 enum ErrorCode {
   ERR_NONE = 0,
-  ERR_BLE_CONNECT_FAILED,      // connect() returned false
-  ERR_BLE_SERVICE_NOT_FOUND,   // LionChief service UUID not on device
-  ERR_BLE_CHAR_NOT_FOUND,      // Write characteristic not found
-  ERR_BLE_WRITE_FAILED,        // GATT write threw exception
-  ERR_BLE_NOT_CONNECTED,       // Command sent while disconnected
-  ERR_BLE_SCAN_NO_RESULT,      // Name scan found nothing
-  ERR_SENSOR_STUCK_LOW,        // Sensor reads LOW continuously
-  ERR_ZONE_TIMEOUT,            // Zone locked 30s with no Sensor C
-  ERR_RELAY_STUCK,             // Relay GPIO did not respond
-  ERR_WATCHDOG_RESET,          // Hardware WDT triggered a reset
-  ERR_INNER_BLOCKED,           // X pressed but zone was active
+  ERR_BLE_CONNECT_FAILED,
+  ERR_BLE_SERVICE_NOT_FOUND,
+  ERR_BLE_CHAR_NOT_FOUND,
+  ERR_BLE_WRITE_FAILED,
+  ERR_BLE_NOT_CONNECTED,
+  ERR_BLE_SCAN_NO_RESULT,
+  ERR_SENSOR_STUCK_LOW,
+  ERR_ZONE_TIMEOUT,
+  ERR_RELAY_STUCK,
+  ERR_WATCHDOG_RESET,
+  ERR_INNER_BLOCKED,
 };
 
 const char* ERROR_MESSAGES[] = {
@@ -188,15 +196,14 @@ const char* ERROR_MESSAGES[] = {
   "BLE characteristic not found — UUID mismatch",
   "BLE GATT write failed — connection dropped mid-send",
   "BLE command ignored — not connected",
-  "BLE scan found no LionChief device with prefix LC0",
-  "IR sensor reads LOW continuously — check wiring/alignment",
-  "Zone timeout — Sensor C did not fire within 30s, force-resuming",
+  "BLE scan found no LionChief device",
+  "IR sensor stuck LOW — check wiring/alignment",
+  "Zone timeout — Sensor C never fired, force-resuming",
   "Relay GPIO did not respond to write",
-  "System reset by hardware watchdog — possible loop hang",
-  "Inner train start blocked — zone is active, wait for clear",
+  "System reset by hardware watchdog",
+  "Inner train blocked — zone active, will try again when clear",
 };
 
-// Persisted across soft resets via RTC RAM
 RTC_DATA_ATTR uint32_t errorCounts[12] = {0};
 RTC_DATA_ATTR uint32_t totalRestarts   = 0;
 RTC_DATA_ATTR uint32_t wdtResets       = 0;
@@ -217,34 +224,38 @@ void reportError(ErrorCode code, const char* context = nullptr) {
 //  SYSTEM STATE
 // ═══════════════════════════════════════════════════════════════════════════
 
-// BLE handles
 BLEClient*               pClient      = nullptr;
 BLERemoteCharacteristic* pChar        = nullptr;
 bool                     bleConnected = false;
 String                   foundMAC     = "";
 
-// ── Zone state machine ─────────────────────────────────────────────────────
 enum ZoneState {
-  STATE_IDLE,            // Outer running, inner parked — all clear
-  STATE_LOCKED,          // Zone occupied — collision prevention active
-  STATE_INNER_PARKING,   // Inner exited zone — coasting to parking spot
-  STATE_DELAY,           // Safety buffer before resuming outer train
-  STATE_SWITCH_PULSE,    // Pulsing track switch relay (outer exit only)
-  STATE_RAMP             // Outer train ramping slow → full speed
+  STATE_IDLE,
+  STATE_LOCKED,
+  STATE_INNER_PARKING,
+  STATE_DELAY,
+  STATE_SWITCH_PULSE,
+  STATE_RAMP
 };
 
 ZoneState zoneState        = STATE_IDLE;
-bool      innerTrainCaused = false;   // true = inner triggered lock
-                                      // false = outer triggered lock
+bool      innerTrainCaused = false;
 
-// ── Inner train one-loop tracking ─────────────────────────────────────────
-bool innerTrainActive     = false;   // true = inner train is running its loop
-bool innerWasCutForOuter  = false;   // true = inner was cut because outer entered
-                                     //        restore power after outer exits
+// ── Speed tracking ─────────────────────────────────────────────────────────
+// currentSpeed  = speed currently commanded to outer train
+// userSetSpeed  = speed user chose before any stop — restored on resume
+int currentSpeed = DEFAULT_OUTER_SPEED;
+int userSetSpeed = DEFAULT_OUTER_SPEED;
+
+// ── Inner train state ──────────────────────────────────────────────────────
+bool          innerTrainActive    = false;
+bool          innerWasCutForOuter = false;
+unsigned long lastInnerRun        = 0;   // millis() of last inner train start
+                                          // used for AUTO_INNER_INTERVAL_MS timer
 
 // ── Non-blocking timers ────────────────────────────────────────────────────
 unsigned long lockTimer     = 0;
-unsigned long parkingTimer  = 0;   // when Sensor C fired for inner train exit
+unsigned long parkingTimer  = 0;
 unsigned long resumeTimer   = 0;
 unsigned long switchTimer   = 0;
 unsigned long rampTimer     = 0;
@@ -253,9 +264,9 @@ unsigned long lastReconnect = 0;
 unsigned long lastKeepalive = 0;
 
 // ── Sensor debounce timestamps ─────────────────────────────────────────────
-unsigned long lastSensorA   = 0;
-unsigned long lastSensorB   = 0;
-unsigned long lastSensorC   = 0;
+unsigned long lastSensorA = 0;
+unsigned long lastSensorB = 0;
+unsigned long lastSensorC = 0;
 
 // ── Sensor stuck detection ─────────────────────────────────────────────────
 #define SENSOR_STUCK_CHECKS 50
@@ -272,7 +283,6 @@ volatile bool sensorC_fired = false;
 bool hornActive   = false;
 bool bellActive   = false;
 bool lightsActive = false;
-int  currentSpeed = 0;
 int  volumeLevel  = 7;
 
 // ── Statistics ─────────────────────────────────────────────────────────────
@@ -284,21 +294,12 @@ uint32_t bleReconnects  = 0;
 uint32_t innerLoopsRun  = 0;
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  INTERRUPT SERVICE ROUTINES
-//  IRAM_ATTR = stored in RAM for guaranteed fast execution.
-//  E18-D80NK outputs HIGH when beam clear, LOW when beam blocked.
-//  FALLING edge = train just broke the beam.
+//  ISR — FALLING edge = train just broke the beam
 // ═══════════════════════════════════════════════════════════════════════════
 
-void IRAM_ATTR ISR_SensorA() {
-  if (digitalRead(SENSOR_A_PIN) == LOW) sensorA_fired = true;
-}
-void IRAM_ATTR ISR_SensorB() {
-  if (digitalRead(SENSOR_B_PIN) == LOW) sensorB_fired = true;
-}
-void IRAM_ATTR ISR_SensorC() {
-  if (digitalRead(SENSOR_C_PIN) == LOW) sensorC_fired = true;
-}
+void IRAM_ATTR ISR_SensorA() { if (digitalRead(SENSOR_A_PIN)==LOW) sensorA_fired=true; }
+void IRAM_ATTR ISR_SensorB() { if (digitalRead(SENSOR_B_PIN)==LOW) sensorB_fired=true; }
+void IRAM_ATTR ISR_SensorC() { if (digitalRead(SENSOR_C_PIN)==LOW) sensorC_fired=true; }
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  BLE CALLBACKS
@@ -309,7 +310,7 @@ class TrainClientCallbacks : public BLEClientCallbacks {
     bleConnected = true;
     bleReconnects++;
     digitalWrite(STATUS_LED, HIGH);
-    Serial.printf("[BLE] ✅ Connected to outer train (reconnect #%lu)\n",
+    Serial.printf("[BLE] ✅ Connected to outer train (total connects: %lu)\n",
                   (unsigned long)bleReconnects);
   }
   void onDisconnect(BLEClient* client) {
@@ -318,7 +319,7 @@ class TrainClientCallbacks : public BLEClientCallbacks {
     digitalWrite(STATUS_LED, LOW);
     Serial.println("[BLE] ⚠️  Disconnected — auto-reconnect in 5s");
     if (zoneState != STATE_IDLE)
-      Serial.println("[BLE] ⚠️  Disconnected while zone LOCKED — reconnecting urgently");
+      Serial.println("[BLE] ⚠️  Lost connection while zone LOCKED — reconnecting urgently");
   }
 };
 
@@ -329,8 +330,7 @@ class ScanCallback : public BLEAdvertisedDeviceCallbacks {
     if (name.length() > 0)
       Serial.printf("[BLE] Scan: %-28s [%s]\n", name.c_str(), addr.c_str());
     if (name.startsWith(TRAIN_NAME_PREFIX)) {
-      Serial.printf("[BLE] ✅ Found LionChief: %s [%s]\n",
-                    name.c_str(), addr.c_str());
+      Serial.printf("[BLE] ✅ LionChief found: %s [%s]\n", name.c_str(), addr.c_str());
       foundMAC = addr;
       BLEDevice::getScan()->stop();
     }
@@ -369,7 +369,6 @@ bool connectToTrain(const char* mac) {
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  BLE: SEND COMMAND
-//  Every write is wrapped in try-catch — connection drop mid-send is caught.
 // ═══════════════════════════════════════════════════════════════════════════
 
 bool sendBLE(uint8_t* cmd, size_t len, const char* label) {
@@ -397,64 +396,135 @@ bool sendBLE(uint8_t* cmd, size_t len, const char* label) {
   }
 }
 
-// Convenience wrappers
-bool bleSendStop()     { stopsSent++;   return sendBLE(CMD_STOP,    3, "STOP outer train"); }
-bool bleResumeSlow()   { resumesSent++; return sendBLE(CMD_SPEED_2, 3, "RESUME outer — slow"); }
-bool bleResumeFull()   {               return sendBLE(CMD_SPEED_7, 3, "RESUME outer — full"); }
+// ── BLE speed helpers ──────────────────────────────────────────────────────
+
+// Send STOP — saves current speed first so we can restore it on resume
+bool bleSendStop() {
+  stopsSent++;
+  // Only save userSetSpeed if train was actually moving
+  // (prevents saving 0 if stop is sent while already stopped)
+  if (currentSpeed > 0) userSetSpeed = currentSpeed;
+  currentSpeed = 0;
+  return sendBLE(CMD_STOP, 3, "STOP outer train");
+}
+
+// Send speed command and update both tracking variables
+// userSetSpeed only updated if speed > 0 — prevents resume-at-zero bug
+bool bleSetSpeed(int speed, const char* label) {
+  speed = constrain(speed, 0, 7);
+  uint8_t cmd[] = {0x00, 0x45, (uint8_t)speed};
+  currentSpeed = speed;
+  if (speed > 0) userSetSpeed = speed;  // never save 0 as restore target
+  return sendBLE(cmd, 3, label);
+}
+
+// Resume at intermediate ramp speed, capped at userSetSpeed
+// Prevents train from briefly overshooting if user had set a low speed
+bool bleResumeRamp() {
+  resumesSent++;
+  int rampSpeed = min(RESUME_RAMP_SPEED, userSetSpeed);
+  if (rampSpeed == 0) rampSpeed = RESUME_RAMP_SPEED;  // fallback if userSetSpeed was 0
+  currentSpeed = rampSpeed;
+  uint8_t cmd[] = {0x00, 0x45, (uint8_t)rampSpeed};
+  char label[40];
+  snprintf(label, sizeof(label), "RESUME ramp speed %d", rampSpeed);
+  return sendBLE(cmd, 3, label);
+}
+
+// Resume at the exact speed user had before the stop
+bool bleResumeUserSpeed() {
+  currentSpeed = userSetSpeed;
+  uint8_t cmd[] = {0x00, 0x45, (uint8_t)userSetSpeed};
+  char label[40];
+  snprintf(label, sizeof(label), "RESUME user speed %d", userSetSpeed);
+  return sendBLE(cmd, 3, label);
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  RELAY CONTROL
-//  GPIO state is read back after every write to detect faults.
 // ═══════════════════════════════════════════════════════════════════════════
 
 void innerTrainPowerCut() {
   digitalWrite(RELAY_POWER_PIN, RELAY_ENERGIZE);
   if (digitalRead(RELAY_POWER_PIN) != RELAY_ENERGIZE)
-    reportError(ERR_RELAY_STUCK, "RELAY_POWER_PIN did not set to ENERGIZE");
-  Serial.println("[RELAY1] 🛑 Inner train STOPPED — track power cut");
+    reportError(ERR_RELAY_STUCK, "RELAY_POWER_PIN (GPIO19) did not energize");
+  Serial.println("[RELAY1] 🛑 Inner train STOPPED — track power cut (GPIO19)");
 }
 
 void innerTrainPowerRestore() {
   digitalWrite(RELAY_POWER_PIN, RELAY_RELEASE);
   if (digitalRead(RELAY_POWER_PIN) != RELAY_RELEASE)
-    reportError(ERR_RELAY_STUCK, "RELAY_POWER_PIN did not release");
-  Serial.println("[RELAY1] ✅ Inner train RUNNING — track power restored");
+    reportError(ERR_RELAY_STUCK, "RELAY_POWER_PIN (GPIO19) did not release");
+  Serial.println("[RELAY1] ✅ Inner train RUNNING — track power restored (GPIO19)");
 }
 
-// Relay 2 — only called when OUTER train exits (innerTrainCaused == false)
 void trackSwitchPulseStart() {
   digitalWrite(RELAY_SWITCH_PIN, RELAY_ENERGIZE);
-  Serial.printf("[RELAY2] Track switch PULSING — %dms\n", SWITCH_PULSE_MS);
+  Serial.printf("[RELAY2] Track switch PULSING %dms (GPIO18)\n", SWITCH_PULSE_MS);
 }
 
 void trackSwitchPulseEnd() {
   digitalWrite(RELAY_SWITCH_PIN, RELAY_RELEASE);
-  Serial.println("[RELAY2] Track switch pulse DONE — switch position reset");
+  Serial.println("[RELAY2] Track switch pulse DONE (GPIO18)");
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  INNER TRAIN AUTO-START
+//  Called both from auto-timer and X manual command.
+//  Returns true if inner train was started, false if blocked.
+// ═══════════════════════════════════════════════════════════════════════════
+
+bool startInnerTrain(bool manual) {
+  if (zoneState != STATE_IDLE) {
+    if (manual) {
+      reportError(ERR_INNER_BLOCKED,
+                  "Zone active — inner will auto-start when zone clears");
+      Serial.println("[INNER] ❌ Zone busy — will auto-start at next opportunity");
+    }
+    return false;
+  }
+  if (innerTrainActive) {
+    if (manual) Serial.println("[INNER] ⚠️  Already running its loop");
+    return false;
+  }
+
+  innerLoopsRun++;
+  innerTrainActive    = true;
+  innerWasCutForOuter = false;
+  lastInnerRun        = millis();
+
+  innerTrainPowerRestore();
+
+  Serial.printf("[INNER] 🚂 Inner train STARTED — loop #%lu (%s)\n",
+                (unsigned long)innerLoopsRun,
+                manual ? "manual X" : "auto-timer");
+  Serial.printf("[INNER] Will park %dms after Sensor C fires\n",
+                PARKING_DELAY_MS);
+  return true;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  SENSOR HEALTH CHECK
-//  Runs every 50 loop cycles. Reports if any sensor is stuck LOW.
 // ═══════════════════════════════════════════════════════════════════════════
 
 void checkSensorHealth() {
-  sensorALowCount = (digitalRead(SENSOR_A_PIN) == LOW)
-    ? (sensorALowCount < 255 ? sensorALowCount + 1 : 255) : 0;
-  sensorBLowCount = (digitalRead(SENSOR_B_PIN) == LOW)
-    ? (sensorBLowCount < 255 ? sensorBLowCount + 1 : 255) : 0;
-  sensorCLowCount = (digitalRead(SENSOR_C_PIN) == LOW)
-    ? (sensorCLowCount < 255 ? sensorCLowCount + 1 : 255) : 0;
+  sensorALowCount = (digitalRead(SENSOR_A_PIN)==LOW)
+    ? (sensorALowCount < 255 ? sensorALowCount+1 : 255) : 0;
+  sensorBLowCount = (digitalRead(SENSOR_B_PIN)==LOW)
+    ? (sensorBLowCount < 255 ? sensorBLowCount+1 : 255) : 0;
+  sensorCLowCount = (digitalRead(SENSOR_C_PIN)==LOW)
+    ? (sensorCLowCount < 255 ? sensorCLowCount+1 : 255) : 0;
 
   if (sensorALowCount >= SENSOR_STUCK_CHECKS) {
-    reportError(ERR_SENSOR_STUCK_LOW, "Sensor A (GPIO16) stuck LOW — check alignment");
+    reportError(ERR_SENSOR_STUCK_LOW, "Sensor A GPIO16 stuck LOW");
     sensorALowCount = 0;
   }
   if (sensorBLowCount >= SENSOR_STUCK_CHECKS) {
-    reportError(ERR_SENSOR_STUCK_LOW, "Sensor B (GPIO15) stuck LOW — check alignment");
+    reportError(ERR_SENSOR_STUCK_LOW, "Sensor B GPIO15 stuck LOW");
     sensorBLowCount = 0;
   }
   if (sensorCLowCount >= SENSOR_STUCK_CHECKS) {
-    reportError(ERR_SENSOR_STUCK_LOW, "Sensor C (GPIO17) stuck LOW — check alignment");
+    reportError(ERR_SENSOR_STUCK_LOW, "Sensor C GPIO17 stuck LOW");
     sensorCLowCount = 0;
   }
 }
@@ -464,84 +534,77 @@ void checkSensorHealth() {
 // ═══════════════════════════════════════════════════════════════════════════
 
 void printStatus() {
-  const char* SNAMES[] = {
-    "IDLE","LOCKED","INNER_PARKING","DELAY","SWITCH_PULSE","RAMP"
-  };
-  unsigned long upSec = millis() / 1000;
+  const char* SN[] = {"IDLE","LOCKED","INNER_PARKING","DELAY","SWITCH_PULSE","RAMP"};
+  unsigned long upSec = millis()/1000;
+  unsigned long nextInner = 0;
+  if (zoneState == STATE_IDLE && !innerTrainActive) {
+    unsigned long elapsed = millis() - lastInnerRun;
+    if (elapsed < AUTO_INNER_INTERVAL_MS)
+      nextInner = (AUTO_INNER_INTERVAL_MS - elapsed) / 1000;
+  }
 
-  Serial.println("\n╔════════════════════════════════════════════════════╗");
-  Serial.println("║             SYSTEM DIAGNOSTICS v5                 ║");
-  Serial.println("╠════════════════════════════════════════════════════╣");
-  Serial.printf( "║  Uptime        : %02luh %02lum %02lus\n",
-                 upSec/3600, (upSec%3600)/60, upSec%60);
-  Serial.printf( "║  Restarts      : %-5lu   WDT resets: %-5lu\n",
-                 (unsigned long)totalRestarts, (unsigned long)wdtResets);
-  Serial.println("╠════════════════════════════════════════════════════╣");
-  Serial.printf( "║  BLE           : %s\n",
-                 bleConnected ? "Connected ✅" : "Disconnected ❌");
-  Serial.printf( "║  BLE reconnects: %-5lu   Write errors: %-5lu\n",
-                 (unsigned long)bleReconnects, (unsigned long)bleWriteErrors);
-  Serial.println("╠════════════════════════════════════════════════════╣");
-  Serial.printf( "║  Zone state    : %s\n", SNAMES[zoneState]);
-  Serial.printf( "║  Locked by     : %s\n",
-                 innerTrainCaused ? "Inner train" : "Outer train / idle");
-  Serial.printf( "║  Inner active  : %s\n",
-                 innerTrainActive ? "YES — running loop" : "NO — parked");
-  Serial.printf( "║  Inner cut for outer: %s\n",
-                 innerWasCutForOuter ? "YES — will restore after outer exits" : "NO");
-  Serial.println("╠════════════════════════════════════════════════════╣");
-  Serial.printf( "║  Outer speed   : %d/7\n", currentSpeed);
-  Serial.printf( "║  Relay 1 power : %s\n",
-                 digitalRead(RELAY_POWER_PIN) == RELAY_ENERGIZE
-                 ? "CUT ⚠️" : "OK — power flowing ✅");
-  Serial.printf( "║  Relay 2 switch: %s\n",
-                 digitalRead(RELAY_SWITCH_PIN) == RELAY_ENERGIZE
-                 ? "PULSING" : "idle");
-  Serial.println("╠════════════════════════════════════════════════════╣");
-  Serial.printf( "║  Stops sent    : %-5lu   Resumes: %-5lu\n",
-                 (unsigned long)stopsSent, (unsigned long)resumesSent);
-  Serial.printf( "║  Inner loops   : %-5lu   Timeouts: %-5lu\n",
-                 (unsigned long)innerLoopsRun, (unsigned long)zoneTimeouts);
-  Serial.println("╠════════════════════════════════════════════════════╣");
-  Serial.printf( "║  Sensor A GPIO16: %s\n",
-                 digitalRead(SENSOR_A_PIN)==LOW ? "LOW — blocked ⚠️" : "HIGH — clear ✅");
-  Serial.printf( "║  Sensor B GPIO15: %s\n",
-                 digitalRead(SENSOR_B_PIN)==LOW ? "LOW — blocked ⚠️" : "HIGH — clear ✅");
-  Serial.printf( "║  Sensor C GPIO17: %s\n",
-                 digitalRead(SENSOR_C_PIN)==LOW ? "LOW — blocked ⚠️" : "HIGH — clear ✅");
-  Serial.println("╠════════════════════════════════════════════════════╣");
+  Serial.println("\n╔══════════════════════════════════════════════════════╗");
+  Serial.println("║           SYSTEM DIAGNOSTICS v5.1                   ║");
+  Serial.println("╠══════════════════════════════════════════════════════╣");
+  Serial.printf( "║  Uptime         : %02luh %02lum %02lus\n", upSec/3600,(upSec%3600)/60,upSec%60);
+  Serial.printf( "║  Restarts       : %-5lu  WDT resets: %-5lu\n",(unsigned long)totalRestarts,(unsigned long)wdtResets);
+  Serial.println("╠══════════════════════════════════════════════════════╣");
+  Serial.printf( "║  BLE            : %s\n", bleConnected?"Connected ✅":"Disconnected ❌");
+  Serial.printf( "║  BLE reconnects : %-5lu  Write errors: %-5lu\n",(unsigned long)bleReconnects,(unsigned long)bleWriteErrors);
+  Serial.println("╠══════════════════════════════════════════════════════╣");
+  Serial.printf( "║  Zone state     : %s\n", SN[zoneState]);
+  Serial.printf( "║  Outer speed    : %d/7 (user set: %d/7)\n", currentSpeed, userSetSpeed);
+  Serial.printf( "║  Relay 1 GPIO19 : %s\n", digitalRead(RELAY_POWER_PIN)==RELAY_ENERGIZE?"CUT ⚠️":"OK — power flowing ✅");
+  Serial.printf( "║  Relay 2 GPIO18 : %s\n", digitalRead(RELAY_SWITCH_PIN)==RELAY_ENERGIZE?"PULSING":"idle");
+  Serial.println("╠══════════════════════════════════════════════════════╣");
+  Serial.printf( "║  Inner active   : %s\n", innerTrainActive?"YES — running loop":"NO — parked");
+  Serial.printf( "║  Inner loops run: %-5lu\n",(unsigned long)innerLoopsRun);
+  if (nextInner > 0)
+    Serial.printf("║  Next auto-start: ~%lus\n", nextInner);
+  else
+    Serial.println("║  Next auto-start: starting soon or already active");
+  Serial.println("╠══════════════════════════════════════════════════════╣");
+  Serial.printf( "║  Stops sent     : %-5lu  Resumes: %-5lu\n",(unsigned long)stopsSent,(unsigned long)resumesSent);
+  Serial.printf( "║  Zone timeouts  : %-5lu\n",(unsigned long)zoneTimeouts);
+  Serial.println("╠══════════════════════════════════════════════════════╣");
+  Serial.printf( "║  Sensor A GPIO16: %s\n", digitalRead(SENSOR_A_PIN)==LOW?"LOW — blocked ⚠️":"HIGH — clear ✅");
+  Serial.printf( "║  Sensor B GPIO15: %s\n", digitalRead(SENSOR_B_PIN)==LOW?"LOW — blocked ⚠️":"HIGH — clear ✅");
+  Serial.printf( "║  Sensor C GPIO17: %s\n", digitalRead(SENSOR_C_PIN)==LOW?"LOW — blocked ⚠️":"HIGH — clear ✅");
+  Serial.println("╠══════════════════════════════════════════════════════╣");
   bool anyErr = false;
-  for (int i = 1; i <= 11; i++) {
-    if (errorCounts[i] > 0) {
-      Serial.printf("║  ERR[%02d] x%-3lu %s\n",
-                    i, (unsigned long)errorCounts[i], ERROR_MESSAGES[i]);
+  for (int i=1;i<=11;i++) {
+    if (errorCounts[i]>0) {
+      Serial.printf("║  ERR[%02d] x%-3lu %s\n",i,(unsigned long)errorCounts[i],ERROR_MESSAGES[i]);
       anyErr = true;
     }
   }
   if (!anyErr) Serial.println("║  No errors recorded ✅");
-  Serial.println("╚════════════════════════════════════════════════════╝\n");
+  Serial.println("╚══════════════════════════════════════════════════════╝\n");
 }
 
 void printMenu() {
-  Serial.println("\n╔══════════════════════════════════════════════════╗");
-  Serial.println("║   Harry Locomotive v5 — Serial Commands          ║");
-  Serial.println("╠══════════════════════════════════════════════════╣");
-  Serial.println("║  OUTER TRAIN (BLE)                               ║");
-  Serial.println("║  s/e=STOP   f=FORWARD   r=REVERSE               ║");
-  Serial.println("║  1-7=Speed  +=SpeedUP   -=SpeedDOWN             ║");
-  Serial.println("╠══════════════════════════════════════════════════╣");
-  Serial.println("║  SOUNDS                                          ║");
-  Serial.println("║  h=Horn  b=Bell  l=Lights  a=Announce           ║");
-  Serial.println("║  n=SoundON  m=SoundOFF  v=VolumeNext            ║");
-  Serial.println("╠══════════════════════════════════════════════════╣");
-  Serial.println("║  INNER TRAIN (ONE-LOOP MODE)                     ║");
-  Serial.println("║  X = Start inner train — runs ONE loop then stops║");
-  Serial.println("║      Blocked if outer train is in shared section ║");
-  Serial.println("║  z = Force cut inner power (emergency)           ║");
-  Serial.println("║  p = Manual track switch pulse (1 second)        ║");
-  Serial.println("╠══════════════════════════════════════════════════╣");
-  Serial.println("║  i = Full diagnostics    ? = This menu           ║");
-  Serial.println("╚══════════════════════════════════════════════════╝\n");
+  Serial.println("\n╔════════════════════════════════════════════════════╗");
+  Serial.println("║   Harry Locomotive v5.1 — Serial Commands          ║");
+  Serial.println("╠════════════════════════════════════════════════════╣");
+  Serial.println("║  OUTER TRAIN (BLE)                                 ║");
+  Serial.println("║  s/e = STOP     f = FORWARD    r = REVERSE         ║");
+  Serial.println("║  1-7 = Set speed directly                          ║");
+  Serial.println("║  + / - = Speed up / down one step                  ║");
+  Serial.println("║  Resume always returns to speed you last set       ║");
+  Serial.println("╠════════════════════════════════════════════════════╣");
+  Serial.println("║  SOUNDS                                            ║");
+  Serial.println("║  h=Horn  b=Bell  l=Lights  a=Announce              ║");
+  Serial.println("║  n=SoundON  m=SoundOFF  v=VolumeNext               ║");
+  Serial.println("╠════════════════════════════════════════════════════╣");
+  Serial.println("║  INNER TRAIN (AUTO every 30s + manual)             ║");
+  Serial.printf( "║  Auto-runs every %-5dms when zone is clear        ║\n",
+                 AUTO_INNER_INTERVAL_MS);
+  Serial.println("║  X = Trigger inner train immediately (manual)      ║");
+  Serial.println("║  z = Emergency cut inner train power               ║");
+  Serial.println("║  p = Manual track switch pulse (1s, GPIO18)        ║");
+  Serial.println("╠════════════════════════════════════════════════════╣");
+  Serial.println("║  i = Full diagnostics    ? = This menu             ║");
+  Serial.println("╚════════════════════════════════════════════════════╝\n");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -551,36 +614,23 @@ void printMenu() {
 void handleSerial(char cmd) {
   switch (cmd) {
 
-    // ── Outer train ────────────────────────────────────────────────
+    // ── Outer train speed ──────────────────────────────────────────
     case 's': case 'e':
-      currentSpeed = 0;
       bleSendStop();
       break;
     case 'f': sendBLE(CMD_FORWARD, 3, "FORWARD"); break;
     case 'r': sendBLE(CMD_REVERSE, 3, "REVERSE"); break;
-    case '+': {
-      if (currentSpeed < 7) currentSpeed++;
-      uint8_t c[] = {0x00, 0x45, (uint8_t)currentSpeed};
-      char l[20]; snprintf(l, sizeof(l), "SPEED %d", currentSpeed);
-      sendBLE(c, 3, l);
-      break;
-    }
-    case '-': {
-      if (currentSpeed > 0) currentSpeed--;
-      uint8_t c[] = {0x00, 0x45, (uint8_t)currentSpeed};
-      char l[20]; snprintf(l, sizeof(l), "SPEED %d", currentSpeed);
-      sendBLE(c, 3, l);
-      break;
-    }
-    case '1': currentSpeed=1; sendBLE(CMD_SPEED_1,3,"SPEED 1"); break;
-    case '2': currentSpeed=2; sendBLE(CMD_SPEED_2,3,"SPEED 2"); break;
-    case '3': currentSpeed=3; sendBLE(CMD_SPEED_3,3,"SPEED 3"); break;
-    case '4': currentSpeed=4; sendBLE(CMD_SPEED_4,3,"SPEED 4"); break;
-    case '5': currentSpeed=5; sendBLE(CMD_SPEED_5,3,"SPEED 5"); break;
-    case '6': currentSpeed=6; sendBLE(CMD_SPEED_6,3,"SPEED 6"); break;
-    case '7': currentSpeed=7; sendBLE(CMD_SPEED_7,3,"SPEED 7"); break;
+    case '+': bleSetSpeed(currentSpeed + 1, "SPEED UP");   break;
+    case '-': bleSetSpeed(currentSpeed - 1, "SPEED DOWN"); break;
+    case '1': bleSetSpeed(1, "SPEED 1"); break;
+    case '2': bleSetSpeed(2, "SPEED 2"); break;
+    case '3': bleSetSpeed(3, "SPEED 3"); break;
+    case '4': bleSetSpeed(4, "SPEED 4"); break;
+    case '5': bleSetSpeed(5, "SPEED 5"); break;
+    case '6': bleSetSpeed(6, "SPEED 6"); break;
+    case '7': bleSetSpeed(7, "SPEED 7"); break;
 
-    // ── Sounds ─────────────────────────────────────────────────────
+    // ── Sounds ────────────────────────────────────────────────────
     case 'h':
       hornActive = !hornActive;
       sendBLE(hornActive ? CMD_HORN_ON : CMD_HORN_OFF, 3,
@@ -610,38 +660,19 @@ void handleSerial(char cmd) {
       break;
     }
 
-    // ── Inner train ────────────────────────────────────────────────
+    // ── Inner train ───────────────────────────────────────────────
     case 'X': case 'x':
-      // Only allowed when zone is completely clear
-      if (zoneState != STATE_IDLE) {
-        reportError(ERR_INNER_BLOCKED,
-                    "Zone is active — wait for outer train to clear shared section");
-        Serial.println("[INNER] ❌ Cannot start — wait for zone to clear then press X again");
-      } else if (innerTrainActive) {
-        Serial.println("[INNER] ⚠️  Inner train is already running its loop");
-      } else {
-        innerTrainActive    = false;  // will be set true below
-        innerWasCutForOuter = false;
-        innerLoopsRun++;
-        innerTrainActive = true;
-        innerTrainPowerRestore();     // give inner train track power
-        Serial.printf("[INNER] 🚂 Inner train STARTED — loop #%lu\n",
-                      (unsigned long)innerLoopsRun);
-        Serial.printf("[INNER] Will auto-stop %dms after Sensor C fires\n",
-                      PARKING_DELAY_MS);
-      }
+      startInnerTrain(true);   // manual trigger
       break;
 
     case 'z':
-      // Emergency cut inner power regardless of state
       innerTrainActive    = false;
       innerWasCutForOuter = false;
       innerTrainPowerCut();
-      Serial.println("[INNER] ⚠️  Emergency STOP — inner train power cut");
+      Serial.println("[INNER] ⚠️  Emergency STOP — inner power cut manually");
       break;
 
     case 'p':
-      // Manual track switch pulse — only in IDLE
       if (zoneState == STATE_IDLE) {
         trackSwitchPulseStart();
         switchTimer = millis();
@@ -661,116 +692,111 @@ void handleSerial(char cmd) {
 
 // ═══════════════════════════════════════════════════════════════════════════
 //  SETUP
-//  ⚠️  RELAY PINS SET HIGH FIRST — before Serial.begin() or anything else.
-//  This prevents the brief GPIO float during boot from energizing the relays.
+//  ⚠️  RELAYS SET FIRST — before Serial.begin() to prevent boot float
 // ═══════════════════════════════════════════════════════════════════════════
 
 void setup() {
-
-  // ── RELAY BOOT FIX — must be absolute first lines ─────────────────
-  // GPIO floats LOW briefly during ESP32 boot before setup() runs.
-  // Setting HIGH here as early as possible prevents relays from firing.
+  // MUST be first — prevents relay boot float (GPIO floats LOW = relay fires)
   pinMode(RELAY_POWER_PIN,  OUTPUT);
   pinMode(RELAY_SWITCH_PIN, OUTPUT);
-  digitalWrite(RELAY_POWER_PIN,  RELAY_RELEASE);   // HIGH = NC closed = inner has power
-  digitalWrite(RELAY_SWITCH_PIN, RELAY_RELEASE);   // HIGH = NO open   = switch idle
-  // ─────────────────────────────────────────────────────────────────
+  digitalWrite(RELAY_POWER_PIN,  RELAY_RELEASE);
+  digitalWrite(RELAY_SWITCH_PIN, RELAY_RELEASE);
 
   Serial.begin(115200);
   delay(400);
   totalRestarts++;
 
-  // Check for hardware WDT reset
   esp_reset_reason_t reason = esp_reset_reason();
   if (reason == ESP_RST_TASK_WDT || reason == ESP_RST_WDT) {
     wdtResets++;
-    reportError(ERR_WATCHDOG_RESET, "Loop hung — system was reset by watchdog");
+    reportError(ERR_WATCHDOG_RESET, "Loop hung — watchdog reset");
   }
 
-  Serial.println("\n╔══════════════════════════════════════════════════╗");
-  Serial.println("║  Harry Locomotive — Collision Prevention v5      ║");
-  Serial.println("║  Datix AI  |  Ahmed Ali  |  May 2026             ║");
-  Serial.println("╠══════════════════════════════════════════════════╣");
-  Serial.printf( "║  Boot #%-5lu  WDT resets: %-5lu                  ║\n",
-                 (unsigned long)totalRestarts, (unsigned long)wdtResets);
-  Serial.printf( "║  Parking delay : %-4dms (tune in config)         ║\n",
+  Serial.println("\n╔════════════════════════════════════════════════════╗");
+  Serial.println("║  Harry Locomotive — Collision Prevention v5.1      ║");
+  Serial.println("║  Datix AI  |  Ahmed Ali  |  May 2026               ║");
+  Serial.println("╠════════════════════════════════════════════════════╣");
+  Serial.printf( "║  Boot #%-5lu  WDT resets: %-5lu                    ║\n",
+                 (unsigned long)totalRestarts,(unsigned long)wdtResets);
+  Serial.printf( "║  Inner auto-interval : %-5dms (~%ds)              ║\n",
+                 AUTO_INNER_INTERVAL_MS, AUTO_INNER_INTERVAL_MS/1000);
+  Serial.printf( "║  Parking delay       : %-5dms                     ║\n",
                  PARKING_DELAY_MS);
-  Serial.println("╚══════════════════════════════════════════════════╝\n");
+  Serial.printf( "║  Resume ramp speed   : %-5d/7                     ║\n",
+                 RESUME_RAMP_SPEED);
+  Serial.println("╚════════════════════════════════════════════════════╝\n");
 
-  // Confirm relay pins are released (safety log)
-  Serial.printf("[GPIO] Relay 1 power  GPIO%-2d — %s\n",
-                RELAY_POWER_PIN,
-                digitalRead(RELAY_POWER_PIN) == RELAY_RELEASE
-                ? "RELEASED ✅ (inner has power)" : "⚠️ NOT RELEASED");
-  Serial.printf("[GPIO] Relay 2 switch GPIO%-2d — %s\n",
-                RELAY_SWITCH_PIN,
-                digitalRead(RELAY_SWITCH_PIN) == RELAY_RELEASE
-                ? "RELEASED ✅ (switch idle)" : "⚠️ NOT RELEASED");
+  // Confirm relay state at boot
+  Serial.printf("[GPIO] Relay 1 GPIO19 (inner power) : %s\n",
+    digitalRead(RELAY_POWER_PIN)==RELAY_RELEASE ? "RELEASED ✅" : "⚠️ NOT RELEASED");
+  Serial.printf("[GPIO] Relay 2 GPIO18 (switch pulse): %s\n",
+    digitalRead(RELAY_SWITCH_PIN)==RELAY_RELEASE ? "RELEASED ✅" : "⚠️ NOT RELEASED");
 
-  // Hardware watchdog — resets ESP32 if loop() hangs
   esp_task_wdt_init(WATCHDOG_TIMEOUT_S, true);
   esp_task_wdt_add(NULL);
   Serial.printf("[WDT] Watchdog armed — %ds timeout\n", WATCHDOG_TIMEOUT_S);
 
-  // Status LED
   pinMode(STATUS_LED, OUTPUT);
   digitalWrite(STATUS_LED, LOW);
 
-  // IR sensors — INPUT_PULLUP: HIGH = beam clear, LOW = beam broken
+  // Sensors — INPUT_PULLUP: HIGH = clear, LOW = train detected
   pinMode(SENSOR_A_PIN, INPUT_PULLUP);
   pinMode(SENSOR_B_PIN, INPUT_PULLUP);
   pinMode(SENSOR_C_PIN, INPUT_PULLUP);
   attachInterrupt(digitalPinToInterrupt(SENSOR_A_PIN), ISR_SensorA, FALLING);
   attachInterrupt(digitalPinToInterrupt(SENSOR_B_PIN), ISR_SensorB, FALLING);
   attachInterrupt(digitalPinToInterrupt(SENSOR_C_PIN), ISR_SensorC, FALLING);
-  Serial.printf("[GPIO] Sensor A GPIO%d (inner entry)\n", SENSOR_A_PIN);
-  Serial.printf("[GPIO] Sensor B GPIO%d (outer entry)\n", SENSOR_B_PIN);
-  Serial.printf("[GPIO] Sensor C GPIO%d (exit)\n",        SENSOR_C_PIN);
+  Serial.printf("[GPIO] Sensor A GPIO%d — inner loop entry\n", SENSOR_A_PIN);
+  Serial.printf("[GPIO] Sensor B GPIO%d — outer loop entry\n", SENSOR_B_PIN);
+  Serial.printf("[GPIO] Sensor C GPIO%d — shared section exit\n", SENSOR_C_PIN);
 
-  // Boot-time sensor check — warn if any sensor already reads LOW
+  // Boot sensor check
   delay(100);
-  if (digitalRead(SENSOR_A_PIN) == LOW)
-    reportError(ERR_SENSOR_STUCK_LOW, "Sensor A LOW at boot — check wiring");
-  if (digitalRead(SENSOR_B_PIN) == LOW)
-    reportError(ERR_SENSOR_STUCK_LOW, "Sensor B LOW at boot — check wiring");
-  if (digitalRead(SENSOR_C_PIN) == LOW)
-    reportError(ERR_SENSOR_STUCK_LOW, "Sensor C LOW at boot — check wiring");
+  if (digitalRead(SENSOR_A_PIN)==LOW) reportError(ERR_SENSOR_STUCK_LOW,"Sensor A LOW at boot");
+  if (digitalRead(SENSOR_B_PIN)==LOW) reportError(ERR_SENSOR_STUCK_LOW,"Sensor B LOW at boot");
+  if (digitalRead(SENSOR_C_PIN)==LOW) reportError(ERR_SENSOR_STUCK_LOW,"Sensor C LOW at boot");
 
-  // BLE connect to outer train
+  // BLE connect
   BLEDevice::init("TrainController");
   Serial.println("\n[BLE] Connecting by MAC...");
   bool ok = connectToTrain(TARGET_MAC);
 
   if (!ok) {
-    Serial.printf("[BLE] MAC failed — scanning for '%s'...\n", TRAIN_NAME_PREFIX);
+    Serial.printf("[BLE] Scanning for '%s'...\n", TRAIN_NAME_PREFIX);
     BLEScan* pScan = BLEDevice::getScan();
     pScan->setAdvertisedDeviceCallbacks(new ScanCallback());
     pScan->setActiveScan(true);
     pScan->start(15, false);
-    if (foundMAC.length() > 0) {
+    if (foundMAC.length() > 0)
       ok = connectToTrain(foundMAC.c_str());
-    } else {
+    else
       reportError(ERR_BLE_SCAN_NO_RESULT, "Is outer train powered on?");
-    }
+  }
+
+  // Start inner auto-timer from now so first auto-run happens after interval
+  lastInnerRun = millis();
+
+  // Set outer train to default running speed
+  if (ok) {
+    bleSetSpeed(DEFAULT_OUTER_SPEED, "INITIAL SPEED");
   }
 
   Serial.println(ok
     ? "\n[SYSTEM] ✅ Ready\n"
-      "         Outer train running — inner train parked\n"
-      "         Press X to run inner train one loop\n"
+      "         Outer train running at user speed\n"
+      "         Inner train will auto-start every 30s\n"
+      "         Press X for immediate inner train trigger\n"
     : "\n[SYSTEM] ⚠️  BLE not connected — will retry every 5s\n");
 
   printMenu();
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-//  MAIN LOOP — fully non-blocking, millis()-based timing throughout
+//  MAIN LOOP
 // ═══════════════════════════════════════════════════════════════════════════
 
 void loop() {
   unsigned long now = millis();
-
-  // Feed hardware watchdog every cycle
   esp_task_wdt_reset();
 
   // ── BLE: Auto-reconnect ────────────────────────────────────────────
@@ -786,22 +812,24 @@ void loop() {
       pScan->start(5, false);
       if (foundMAC.length() > 0) connectToTrain(foundMAC.c_str());
     }
-    // Re-send STOP immediately if we reconnected during a locked zone
+    // Re-send STOP immediately if reconnected during a locked zone
+    // Use sendBLE directly — bleSendStop would corrupt userSetSpeed/stopsSent
     if (bleConnected && zoneState != STATE_IDLE && innerTrainCaused) {
       Serial.println("[BLE] Reconnected during lock — re-sending STOP");
-      bleSendStop();
+      sendBLE(CMD_STOP, 3, "STOP re-send after reconnect");
       lastStopSent = now;
     }
   }
 
-  // ── BLE: Keepalive ping ────────────────────────────────────────────
-  // Only during IDLE or RAMP to avoid interfering with STOP commands
+  // ── BLE: Keepalive — only if speed > 0 (never accidentally stops train) ─
   if (bleConnected &&
       (zoneState == STATE_IDLE || zoneState == STATE_RAMP) &&
       (now - lastKeepalive > BLE_KEEPALIVE_MS)) {
     lastKeepalive = now;
-    uint8_t c[] = {0x00, 0x45, (uint8_t)currentSpeed};
-    sendBLE(c, 3, "keepalive");
+    if (currentSpeed > 0) {
+      uint8_t c[] = {0x00, 0x45, (uint8_t)currentSpeed};
+      sendBLE(c, 3, "keepalive");
+    }
   }
 
   // ── Serial commands ────────────────────────────────────────────────
@@ -824,6 +852,15 @@ void loop() {
     trackSwitchPulseEnd();
   }
 
+  // ── Auto inner train timer ─────────────────────────────────────────
+  // Every AUTO_INNER_INTERVAL_MS, if zone is clear, start inner train.
+  // startInnerTrain() checks zone state internally — safe to call here.
+  if (zoneState == STATE_IDLE &&
+      !innerTrainActive &&
+      (now - lastInnerRun >= AUTO_INNER_INTERVAL_MS)) {
+    startInnerTrain(false);   // auto trigger (not manual)
+  }
+
   // ════════════════════════════════════════════════════════════════════
   //  ZONE STATE MACHINE
   // ════════════════════════════════════════════════════════════════════
@@ -832,8 +869,6 @@ void loop() {
 
     // ──────────────────────────────────────────────────────────────────
     //  STATE_IDLE
-    //  Outer train running freely. Inner train parked (off by default).
-    //  Waiting for either sensor to detect a train approaching.
     // ──────────────────────────────────────────────────────────────────
     case STATE_IDLE: {
 
@@ -842,22 +877,16 @@ void loop() {
         sensorA_fired = false;
         if (now - lastSensorA > SENSOR_DEBOUNCE_MS) {
           lastSensorA = now;
-
-          if (!innerTrainActive) {
-            // Inner train was not supposed to be running — log but do not lock
-            // (could be a false trigger or train was manually powered)
-            Serial.println("[SENSOR A] ⚠️  Triggered but inner train not active — monitoring");
-          }
-
+          if (!innerTrainActive)
+            Serial.println("[SENSOR A] ⚠️  Fired but inner not active — monitoring");
           Serial.println("\n[SENSOR A] ⚠️  Inner train entering shared section!");
-          Serial.println("[ACTION]   BLE STOP sent to outer train");
-
+          Serial.printf( "[ACTION]   BLE STOP — user speed %d saved, will restore on resume\n",
+                         userSetSpeed);
           innerTrainCaused = true;
           zoneState        = STATE_LOCKED;
           lockTimer        = now;
           lastStopSent     = now;
-          bleSendStop();
-          currentSpeed = 0;
+          bleSendStop();   // saves userSetSpeed before setting currentSpeed=0
         }
       }
 
@@ -867,19 +896,16 @@ void loop() {
         if (now - lastSensorB > SENSOR_DEBOUNCE_MS) {
           lastSensorB = now;
           Serial.println("\n[SENSOR B] ⚠️  Outer train entering shared section!");
-
           innerTrainCaused = false;
           zoneState        = STATE_LOCKED;
           lockTimer        = now;
-
-          // If inner train is running, cut its power to prevent collision
           if (innerTrainActive) {
             innerWasCutForOuter = true;
             innerTrainPowerCut();
-            Serial.println("[ACTION]   Inner train power cut (will restore after outer exits)");
+            Serial.println("[ACTION]   Inner power cut — will restore after outer exits");
           } else {
             innerWasCutForOuter = false;
-            Serial.println("[ACTION]   Zone locked — inner train was parked, no relay action");
+            Serial.println("[ACTION]   Zone locked — inner was parked, no relay action");
           }
         }
       }
@@ -889,54 +915,47 @@ void loop() {
 
     // ──────────────────────────────────────────────────────────────────
     //  STATE_LOCKED
-    //  A train is in the shared section.
-    //  If inner caused it → keep BLE STOP on outer + wait for Sensor C
-    //  If outer caused it → inner power already cut (if was running)
-    //  Timeout after ZONE_TIMEOUT_MS to prevent permanent deadlock.
     // ──────────────────────────────────────────────────────────────────
     case STATE_LOCKED: {
 
-      // Keep outer train stopped while inner is in zone
+      // Repeat STOP while inner is in zone — outer must not move
       if (innerTrainCaused && (now - lastStopSent > STOP_REPEAT_MS)) {
         lastStopSent = now;
-        bleSendStop();
+        sendBLE(CMD_STOP, 3, "STOP repeated");
       }
 
-      // Sensor C — train exiting shared section
+      // Train exits shared section
       if (sensorC_fired) {
         sensorC_fired = false;
         if (now - lastSensorC > SENSOR_DEBOUNCE_MS) {
           lastSensorC = now;
           Serial.println("[SENSOR C] ✅ Train exiting shared section");
-
           if (innerTrainCaused) {
-            // Inner train has exited — let it coast to parking spot
-            Serial.printf("[INNER]    Coasting to parking — %dms until power cut\n",
-                          PARKING_DELAY_MS);
-            zoneState   = STATE_INNER_PARKING;
+            Serial.printf("[INNER]    Coasting to parking — %dms\n", PARKING_DELAY_MS);
+            zoneState    = STATE_INNER_PARKING;
             parkingTimer = now;
           } else {
-            // Outer train has exited — safety delay then switch pulse
-            Serial.printf("[SYSTEM]   Outer exited — safety delay %dms\n",
-                          RESUME_DELAY_MS);
+            Serial.printf("[SYSTEM]   Outer exited — safety delay %dms\n", RESUME_DELAY_MS);
             zoneState   = STATE_DELAY;
             resumeTimer = now;
           }
         }
       }
 
-      // Zone timeout — Sensor C never fired
+      // Timeout — Sensor C never fired
       if (now - lockTimer > ZONE_TIMEOUT_MS) {
         zoneTimeouts++;
         reportError(ERR_ZONE_TIMEOUT,
                     innerTrainCaused
-                    ? "Inner train may be stuck/derailed in shared section"
-                    : "Outer train may be stuck/derailed in shared section");
-        // Force-cut inner and go to delay to resume outer
+                    ? "Inner may be stuck in shared section"
+                    : "Outer may be stuck in shared section");
         if (innerTrainCaused) {
           innerTrainActive = false;
           innerTrainPowerCut();
         }
+        // Reset inner timer so auto-start doesn't fire immediately after recovery
+        lastInnerRun     = now;
+        innerWasCutForOuter = false;   // clear flag — timeout is a hard reset
         zoneState   = STATE_DELAY;
         resumeTimer = now;
       }
@@ -946,30 +965,22 @@ void loop() {
 
     // ──────────────────────────────────────────────────────────────────
     //  STATE_INNER_PARKING
-    //  Inner train has exited the shared section via Sensor C.
-    //  It is coasting toward its parking position.
-    //  Outer train stays stopped (STOP repeated) during parking.
-    //  After PARKING_DELAY_MS → cut relay → inner stops at parking spot.
-    //  Then begin safety delay before resuming outer train.
+    //  Inner exited zone — count down to parking cut
     // ──────────────────────────────────────────────────────────────────
     case STATE_INNER_PARKING: {
 
-      // Keep outer train stopped during parking coast
+      // Keep outer stopped while inner coasts to parking
       if (now - lastStopSent > STOP_REPEAT_MS) {
         lastStopSent = now;
-        bleSendStop();
+        sendBLE(CMD_STOP, 3, "STOP during inner parking");
       }
 
       if (now - parkingTimer >= PARKING_DELAY_MS) {
-        // Cut inner train power — stops at parking position
         innerTrainActive = false;
+        lastInnerRun     = now;   // reset auto-timer from now
         innerTrainPowerCut();
-        Serial.println("[INNER]    ⛔ Inner train stopped at parking position");
-        Serial.println("[INNER]    Loop complete — press X to run again");
-
-        // Begin safety delay before resuming outer train
-        Serial.printf("[SYSTEM]   Safety delay %dms before outer resumes\n",
-                      RESUME_DELAY_MS);
+        Serial.println("[INNER]    ⛔ Stopped at parking position");
+        Serial.printf( "[INNER]    Next auto-run in %ds\n", AUTO_INNER_INTERVAL_MS/1000);
         zoneState   = STATE_DELAY;
         resumeTimer = now;
       }
@@ -979,32 +990,28 @@ void loop() {
 
     // ──────────────────────────────────────────────────────────────────
     //  STATE_DELAY
-    //  Safety buffer — trains need time to fully clear before resuming.
-    //  For inner-train exits: outer resumes after delay (no switch pulse).
-    //  For outer-train exits: switch pulse fires after delay.
-    //  Keep sending STOP during delay.
+    //  Safety buffer. Then either switch pulse (outer) or resume (inner).
     // ──────────────────────────────────────────────────────────────────
     case STATE_DELAY: {
 
       if (now - lastStopSent > STOP_REPEAT_MS) {
         lastStopSent = now;
-        bleSendStop();
+        sendBLE(CMD_STOP, 3, "STOP during delay");
       }
 
       if (now - resumeTimer >= RESUME_DELAY_MS) {
         if (!innerTrainCaused) {
-          // Outer train exited — pulse track switch to reset direction
-          Serial.println("[RELAY2]   Pulsing track switch — outer loop reset");
+          // Outer exited → pulse track switch first
           trackSwitchPulseStart();
           zoneState   = STATE_SWITCH_PULSE;
           switchTimer = now;
         } else {
-          // Inner train exited (already parked) — resume outer directly
-          Serial.println("[RESUME]   Inner parked → outer train resuming slowly");
-          bleResumeSlow();
-          currentSpeed = RESUME_SLOW_SPEED;
-          zoneState    = STATE_RAMP;
-          rampTimer    = now;
+          // Inner parked → resume outer at ramp speed first
+          Serial.printf("[RESUME]   Inner parked → outer ramping to speed %d\n",
+                        RESUME_RAMP_SPEED);
+          bleResumeRamp();
+          zoneState = STATE_RAMP;
+          rampTimer = now;
         }
       }
 
@@ -1012,37 +1019,31 @@ void loop() {
     }
 
     // ──────────────────────────────────────────────────────────────────
-    //  STATE_SWITCH_PULSE
-    //  1-second relay pulse resets track switch to outer loop direction.
-    //  Only reached when OUTER train was the one that exited.
-    //  Inner train power is restored here if it was cut for the outer.
+    //  STATE_SWITCH_PULSE — only for outer train exit
     // ──────────────────────────────────────────────────────────────────
     case STATE_SWITCH_PULSE: {
 
-      // Keep outer stopped during switch pulse
       if (now - lastStopSent > STOP_REPEAT_MS) {
         lastStopSent = now;
-        bleSendStop();
+        sendBLE(CMD_STOP, 3, "STOP during switch pulse");
       }
 
       if (now - switchTimer >= SWITCH_PULSE_MS) {
         trackSwitchPulseEnd();
 
-        // Restore inner train power if it was cut because outer entered zone
+        // Restore inner power if it was cut because outer entered zone
         if (innerWasCutForOuter && innerTrainActive) {
           innerTrainPowerRestore();
           innerWasCutForOuter = false;
-          Serial.println("[INNER]    Power restored — inner train continuing loop");
+          Serial.println("[INNER]    Power restored — continuing loop");
         } else {
           innerWasCutForOuter = false;
         }
 
-        // Resume outer train at slow speed
-        Serial.println("[RESUME]   Outer train resuming slowly after switch pulse");
-        bleResumeSlow();
-        currentSpeed = RESUME_SLOW_SPEED;
-        zoneState    = STATE_RAMP;
-        rampTimer    = now;
+        Serial.printf("[RESUME]   Outer train ramping to speed %d\n", RESUME_RAMP_SPEED);
+        bleResumeRamp();
+        zoneState = STATE_RAMP;
+        rampTimer = now;
       }
 
       break;
@@ -1050,23 +1051,22 @@ void loop() {
 
     // ──────────────────────────────────────────────────────────────────
     //  STATE_RAMP
-    //  Outer train at slow speed — ramp up to full speed after delay.
-    //  Prevents outer train rushing immediately back into shared section.
+    //  Short time at ramp speed → then restore exact user-set speed
     // ──────────────────────────────────────────────────────────────────
     case STATE_RAMP: {
 
       if (now - rampTimer >= SPEED_RAMP_MS) {
-        bleResumeFull();
-        currentSpeed = RESUME_FULL_SPEED;
+        // Restore to the exact speed the user had before the stop
+        Serial.printf("[RESUME]   Restoring user speed %d/7\n", userSetSpeed);
+        bleResumeUserSpeed();
 
-        // Clear all ISR flags accumulated during resume sequence
         sensorA_fired    = false;
         sensorB_fired    = false;
         sensorC_fired    = false;
         innerTrainCaused = false;
         zoneState        = STATE_IDLE;
 
-        Serial.println("[ZONE]     ✅ UNLOCKED — outer running, inner parked\n");
+        Serial.println("[ZONE]     ✅ UNLOCKED — outer at user speed, inner parked\n");
       }
 
       break;
@@ -1074,7 +1074,6 @@ void loop() {
   }
 
   // ── Heartbeat LED ──────────────────────────────────────────────────
-  // 40ms blink every 2s = system alive in IDLE. Solid = BLE connected.
   static unsigned long lastBlink   = 0;
   static unsigned long ledOnTime   = 0;
   static bool          ledBlinking = false;
@@ -1090,5 +1089,5 @@ void loop() {
     }
   }
 
-  delay(5);   // Yield 5ms to BLE stack each cycle — safe, timers are 100ms+ range
+  delay(5);
 }
