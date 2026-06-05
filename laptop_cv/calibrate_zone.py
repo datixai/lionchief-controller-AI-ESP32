@@ -1,302 +1,328 @@
 # ══════════════════════════════════════════════════════════════════
-#  calibrate_zone.py  —  Precision 3-Zone Calibration Tool
+#  calibrate_zone.py  —  Precision Polygon Zone Calibration
+#  Harry Locomotive Project  |  Datix AI  |  May 2026
 #
-#  Draws three zones matching ESP32 IR sensor positions:
-#    Zone A — Inner loop approach (before shared section entry)
-#    Zone B — Outer loop approach (before shared section entry)
-#    Zone C — Shared section / exit
+#  Draws THREE polygon zones matching ESP32 IR sensor positions.
+#  Polygons follow curved track precisely — unlimited corner points.
+#
+#  ZONES:
+#    Zone A — Inner loop approach (before shared section, inner track)
+#    Zone B — Outer loop approach (before shared section, outer track)
+#    Zone C — Shared section / exit area
 #
 #  HOW TO USE:
-#    1. python calibrate_zone.py
-#    2. Press TAB to switch between Zone A / B / C
-#    3. Click and drag to draw the zone on camera image
-#    4. Use ARROW KEYS to fine-tune zone edges precisely
-#       (hold SHIFT for large steps, normal for 1px steps)
-#    5. Press Z to toggle zoom window for precise placement
-#    6. Press S to save current zone
-#    7. Press A to save ALL zones and quit
-#    8. Press R to redraw current zone
-#    9. Press Q to quit
+#    1.  python calibrate_zone.py
+#    2.  Press TAB to switch between Zone A / B / C
+#    3.  LEFT CLICK to place polygon corner points
+#        (click around both sides of the track — as many points as needed)
+#    4.  RIGHT CLICK to undo / remove last placed point
+#    5.  LEFT CLICK near an existing point (green dot) to SELECT and drag it
+#    6.  Press Z to toggle 4x ZOOM window for precise placement
+#    7.  Press ENTER or F to FINISH / CLOSE the current polygon
+#    8.  Press S to SAVE current zone
+#    9.  Press A to SAVE ALL zones and quit
+#   10.  Press R to RESET / redraw current zone from scratch
+#   11.  Press Q / ESC to quit
+#
+#  TIPS FOR CURVED TRACK:
+#    • Click many points closely spaced to follow the curve
+#    • Click on BOTH SIDES of the track rail to enclose it
+#    • The filled polygon shows exactly what the detector will watch
+#    • Use Z zoom to place points precisely on thin rails
 # ══════════════════════════════════════════════════════════════════
 
 import cv2
 import json
 import os
-import datetime
 import numpy as np
+import datetime
 import config
 
 ZONES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                           config.ZONES_FILE)
 
-# Zone definitions — label, instructions, display color
+# Zone definitions
 ZONE_DEFS = {
     "A": {
         "label":       "Zone A — Inner Loop Approach",
-        "description": "Draw on INNER loop track, just BEFORE shared section entry",
+        "desc":        "Draw around INNER loop track, just BEFORE shared section entry",
         "color":       (0, 165, 255),   # orange
-        "key":         "A",
     },
     "B": {
         "label":       "Zone B — Outer Loop Approach",
-        "description": "Draw on OUTER loop track, just BEFORE shared section entry",
-        "color":       (255, 100, 0),   # blue
-        "key":         "B",
+        "desc":        "Draw around OUTER loop track, just BEFORE shared section entry",
+        "color":       (255, 80, 0),    # blue
     },
     "C": {
         "label":       "Zone C — Shared Section / Exit",
-        "description": "Draw over the ENTIRE shared track section",
-        "color":       (0, 220, 0),     # green
-        "key":         "C",
+        "desc":        "Draw over ENTIRE shared track section including exit",
+        "color":       (0, 200, 0),     # green
     },
 }
-
 ZONE_ORDER = ["A", "B", "C"]
 
 # ── State ─────────────────────────────────────────────────────────
-zones = {}           # {"A": (x1,y1,x2,y2), "B": ..., "C": ...}
-current_zone = "A"   # which zone is being edited
-drawing = False
-drag_start = (0, 0)
-drag_end   = (0, 0)
-show_zoom  = False
-zoom_edge  = "right"  # which edge is highlighted for fine-tuning
-frame_w = 1280
-frame_h = 720
+saved_zones    = {}          # {zone_key: [[x,y], [x,y], ...]}
+current_zone   = "A"
+current_points = []          # points being drawn for current zone
+polygon_closed = False       # True after ENTER/F pressed
+selected_idx   = None        # index of point being dragged
+drag_active    = False
+show_zoom      = False
+cursor_pos     = (0, 0)
+frame_w        = 1280
+frame_h        = 720
 
+# Point selection radius in pixels
+SELECT_RADIUS = 12
+
+# ── Load existing zones ───────────────────────────────────────────
 
 def load_existing():
-    """Load previously saved zones if file exists."""
-    global zones
-    if os.path.exists(ZONES_FILE):
+    global saved_zones, current_points, polygon_closed
+    if not os.path.exists(ZONES_FILE):
+        print("\n  No existing zones.json — draw fresh zones.")
+        return
+    try:
         with open(ZONES_FILE, "r") as f:
             data = json.load(f)
         for z in ZONE_ORDER:
-            if z in data and data[z]:
-                r = data[z]["rect"]
-                zones[z] = (r["x1"], r["y1"], r["x2"], r["y2"])
-        print(f"\n  Loaded existing zones from {ZONES_FILE}")
-    else:
-        print(f"\n  No existing zones found — draw all three zones.")
+            if z in data and data[z].get("points"):
+                pts = data[z]["points"]
+                if len(pts) >= 3:
+                    saved_zones[z] = pts
+        if saved_zones:
+            # Load active zone into drawing buffer
+            if current_zone in saved_zones:
+                current_points = [list(p) for p in saved_zones[current_zone]]
+                polygon_closed = True
+            print(f"  Loaded zones: {list(saved_zones.keys())} from {ZONES_FILE}")
+    except Exception as e:
+        print(f"  Warning: could not load zones.json — {e}")
 
 
-def save_zone(zone_key):
-    """Save the current zone to zones.json."""
-    if zone_key not in zones:
-        print(f"  ❌ Zone {zone_key} not drawn yet")
+def save_zone(zone_key, points, closed):
+    if len(points) < 3 or not closed:
+        print(f"  ❌ Zone {zone_key} needs at least 3 points and must be closed (press ENTER)")
         return False
 
-    x1, y1, x2, y2 = zones[zone_key]
-
-    # Load existing file or start fresh
     if os.path.exists(ZONES_FILE):
-        with open(ZONES_FILE, "r") as f:
-            data = json.load(f)
+        try:
+            with open(ZONES_FILE, "r") as f:
+                data = json.load(f)
+        except Exception:
+            data = {}
     else:
         data = {}
 
+    area = cv2.contourArea(np.array(points, dtype=np.float32))
     data[zone_key] = {
-        "rect": {"x1": x1, "y1": y1, "x2": x2, "y2": y2},
+        "points":      points,
         "label":       ZONE_DEFS[zone_key]["label"],
-        "description": ZONE_DEFS[zone_key]["description"],
-        "frame_width":  frame_w,
-        "frame_height": frame_h,
-        "zone_width":  x2 - x1,
-        "zone_height": y2 - y1,
+        "desc":        ZONE_DEFS[zone_key]["desc"],
+        "point_count": len(points),
+        "area_px":     int(area),
+        "frame_width": frame_w,
+        "frame_height":frame_h,
         "saved_at":    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }
 
     with open(ZONES_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-    print(f"  ✅ Zone {zone_key} saved: ({x1},{y1})→({x2},{y2})  "
-          f"size:{x2-x1}×{y2-y1}px")
+    saved_zones[zone_key] = [list(p) for p in points]
+    print(f"  ✅ Zone {zone_key} saved — {len(points)} points, area: {int(area)}px²")
     return True
 
 
-def save_all():
-    """Save all zones."""
-    saved = 0
-    for z in ZONE_ORDER:
-        if z in zones:
-            if save_zone(z):
-                saved += 1
-    print(f"\n  ✅ Saved {saved}/3 zones to {ZONES_FILE}")
-    missing = [z for z in ZONE_ORDER if z not in zones]
+def save_all(current_pts, closed):
+    # Save current zone first if it has points
+    if len(current_pts) >= 3 and closed:
+        save_zone(current_zone, current_pts, closed)
+    saved = list(saved_zones.keys())
+    missing = [z for z in ZONE_ORDER if z not in saved_zones]
+    print(f"\n  Saved zones: {saved}")
     if missing:
-        print(f"  ⚠️  Missing zones: {missing} — run again to draw them")
+        print(f"  ⚠️  Missing zones: {missing}")
+    else:
+        print("  ✅ All 3 zones saved!")
     return saved
 
 
+# ── Mouse callback ────────────────────────────────────────────────
+
+def get_nearest_point_idx(pts, x, y, radius=SELECT_RADIUS):
+    """Return index of nearest point within radius, or None."""
+    best_idx  = None
+    best_dist = radius * radius
+    for i, (px, py) in enumerate(pts):
+        d = (px - x)**2 + (py - y)**2
+        if d < best_dist:
+            best_dist = d
+            best_idx  = i
+    return best_idx
+
+
 def mouse_callback(event, x, y, flags, param):
-    global drawing, drag_start, drag_end
+    global current_points, polygon_closed, selected_idx, drag_active, cursor_pos
+
+    cursor_pos = (x, y)
 
     if event == cv2.EVENT_LBUTTONDOWN:
-        drawing    = True
-        drag_start = (x, y)
-        drag_end   = (x, y)
+        if polygon_closed:
+            # Try to select existing point for dragging
+            idx = get_nearest_point_idx(current_points, x, y)
+            if idx is not None:
+                selected_idx = idx
+                drag_active  = True
+            # Click far from any point: do nothing (polygon already closed)
+        else:
+            # Add a new corner point to the polygon
+            current_points.append([x, y])
 
     elif event == cv2.EVENT_MOUSEMOVE:
-        if drawing:
-            drag_end = (x, y)
+        if drag_active and selected_idx is not None:
+            current_points[selected_idx] = [x, y]
 
     elif event == cv2.EVENT_LBUTTONUP:
-        drawing  = False
-        drag_end = (x, y)
-        x1 = min(drag_start[0], drag_end[0])
-        y1 = min(drag_start[1], drag_end[1])
-        x2 = max(drag_start[0], drag_end[0])
-        y2 = max(drag_start[1], drag_end[1])
-        # Ignore tiny accidental clicks
-        if (x2 - x1) > 15 and (y2 - y1) > 15:
-            zones[current_zone] = (x1, y1, x2, y2)
-            print(f"  Zone {current_zone} drawn: ({x1},{y1})→({x2},{y2})  "
-                  f"size:{x2-x1}×{y2-y1}px  "
-                  f"Press S to save, arrow keys to fine-tune")
+        drag_active  = False
+        selected_idx = None
+
+    elif event == cv2.EVENT_RBUTTONDOWN:
+        if polygon_closed:
+            # Right click: deselect and allow editing again
+            polygon_closed = False
+            print("  Polygon opened for editing — click to move points, ENTER to close again")
+        else:
+            # Undo last added point
+            if current_points:
+                current_points.pop()
+                print(f"  Removed last point — {len(current_points)} remaining")
 
 
-def adjust_zone(zone_key, direction, step=1):
-    """
-    Fine-tune zone edges with arrow keys.
-    Direction: 'left_in', 'left_out', 'right_in', 'right_out',
-               'top_in', 'top_out', 'bottom_in', 'bottom_out'
-    Cycle through edges with WASD, then use arrows to nudge.
-    """
-    if zone_key not in zones:
-        return
-    x1, y1, x2, y2 = zones[zone_key]
+# ── Draw helpers ──────────────────────────────────────────────────
 
-    if direction == "left":     x1 = max(0, x1 - step)
-    elif direction == "right":  x1 = min(x2 - 10, x1 + step)
-    elif direction == "up":     y1 = max(0, y1 - step)
-    elif direction == "down":   y1 = min(y2 - 10, y1 + step)
-    elif direction == "r_left": x2 = max(x1 + 10, x2 - step)
-    elif direction == "r_right":x2 = min(frame_w, x2 + step)
-    elif direction == "r_up":   y2 = max(y1 + 10, y2 - step)
-    elif direction == "r_down": y2 = min(frame_h, y2 + step)
+def draw_zone_on_frame(frame, zone_key, points, closed, is_active):
+    """Draw a polygon zone with fill, outline and point handles."""
+    if not points:
+        return frame
 
-    zones[zone_key] = (x1, y1, x2, y2)
+    pts_arr = np.array(points, dtype=np.int32)
+    color   = ZONE_DEFS[zone_key]["color"]
+    is_cur  = is_active
 
+    # Semi-transparent fill if closed
+    if closed and len(points) >= 3:
+        overlay = frame.copy()
+        cv2.fillPoly(overlay, [pts_arr], color)
+        alpha = 0.35 if is_cur else 0.15
+        cv2.addWeighted(overlay, alpha, frame, 1 - alpha, 0, frame)
 
-def draw_all_zones(frame, active_key):
-    """Draw all zones on the frame, highlight the active one."""
-    overlay = frame.copy()
+    # Draw edges
+    if len(points) >= 2:
+        for i in range(len(points) - 1):
+            cv2.line(frame,
+                     tuple(points[i]),
+                     tuple(points[i + 1]),
+                     color, 2 if is_cur else 1)
+        if closed and len(points) >= 3:
+            cv2.line(frame,
+                     tuple(points[-1]),
+                     tuple(points[0]),
+                     color, 2 if is_cur else 1)
 
-    for z_key in ZONE_ORDER:
-        if z_key not in zones:
-            continue
+    # Draw point handles
+    for i, (px, py) in enumerate(points):
+        # Outer circle
+        cv2.circle(frame, (px, py), 6 if is_cur else 4, color, -1)
+        # White inner dot
+        cv2.circle(frame, (px, py), 3 if is_cur else 2, (255, 255, 255), -1)
 
-        x1, y1, x2, y2 = zones[z_key]
-        color = ZONE_DEFS[z_key]["color"]
-        is_active = (z_key == active_key)
-
-        # Fill
-        alpha = 0.35 if is_active else 0.15
-        cv2.rectangle(overlay, (x1, y1), (x2, y2), color, -1)
-
-        # Border — thicker for active zone
-        thickness = 3 if is_active else 1
-        cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness)
-
-        # Corner handles for active zone
-        if is_active:
-            hlen = 12
-            for cx, cy in [(x1,y1),(x2,y1),(x1,y2),(x2,y2)]:
-                dx = 1 if cx == x1 else -1
-                dy = 1 if cy == y1 else -1
-                cv2.line(frame, (cx, cy), (cx + dx*hlen, cy), (255,255,255), 2)
-                cv2.line(frame, (cx, cy), (cx, cy + dy*hlen), (255,255,255), 2)
-
-        # Label
-        label = f"Zone {z_key}"
-        lx = x1 + 4
-        ly = y1 + 20 if y1 + 20 < y2 else y2 - 6
-        cv2.putText(frame, label, (lx, ly),
+    # Zone label
+    if points:
+        cx = int(np.mean([p[0] for p in points]))
+        cy = int(np.mean([p[1] for p in points]))
+        label = f"Zone {zone_key}"
+        cv2.putText(frame, label, (cx - 25, cy),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.65 if is_active else 0.5,
-                    color,
-                    2 if is_active else 1)
+                    0.65 if is_cur else 0.45,
+                    color, 2 if is_cur else 1)
+        if is_cur:
+            info = f"{len(points)}pts {'CLOSED' if closed else 'drawing...'}"
+            cv2.putText(frame, info, (cx - 30, cy + 18),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 1)
 
-        # Size label for active zone
-        if is_active:
-            size_txt = f"{x2-x1}x{y2-y1}px  ({x1},{y1})→({x2},{y2})"
-            cv2.putText(frame, size_txt, (x1, max(y1 - 8, 14)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, color, 1)
-
-    # Blend overlay
-    cv2.addWeighted(overlay, 0.25, frame, 0.75, 0, frame)
     return frame
 
 
-def draw_zoom_panel(frame, zone_key):
-    """
-    Draw a 4x magnified view of the active zone edges
-    in the bottom-right corner for precision placement.
-    """
-    if zone_key not in zones:
-        return frame
-
-    x1, y1, x2, y2 = zones[zone_key]
+def draw_zoom_panel(frame, cursor_x, cursor_y, zoom=4, size=160):
+    """Draw a magnified view of the cursor area for precise placement."""
     h, w = frame.shape[:2]
+    half = size // zoom // 2
 
-    # Crop a small strip around right+bottom edges
-    margin = 30
-    cx = max(0, x2 - margin)
-    cy = max(0, y2 - margin)
-    ex = min(w, x2 + margin)
-    ey = min(h, y2 + margin)
+    x1 = max(0, cursor_x - half)
+    y1 = max(0, cursor_y - half)
+    x2 = min(w, cursor_x + half)
+    y2 = min(h, cursor_y + half)
 
-    crop = frame[cy:ey, cx:ex]
+    crop = frame[y1:y2, x1:x2]
     if crop.size == 0:
         return frame
 
-    zoom = cv2.resize(crop, None, fx=4, fy=4,
-                      interpolation=cv2.INTER_NEAREST)
+    zoomed = cv2.resize(crop, None, fx=zoom, fy=zoom,
+                        interpolation=cv2.INTER_NEAREST)
+    zh, zw = zoomed.shape[:2]
+    ph = min(zh, 200)
+    pw = min(zw, 200)
+    zoomed = zoomed[:ph, :pw]
 
     # Crosshair on zoom
-    zh, zw = zoom.shape[:2]
-    cv2.line(zoom, (zw//2, 0), (zw//2, zh), (0, 255, 255), 1)
-    cv2.line(zoom, (0, zh//2), (zw, zh//2), (0, 255, 255), 1)
+    cv2.line(zoomed, (pw // 2, 0), (pw // 2, ph), (0, 255, 255), 1)
+    cv2.line(zoomed, (0, ph // 2), (pw, ph // 2), (0, 255, 255), 1)
 
-    # Paste in bottom-right corner
-    ph, pw = zoom.shape[:2]
-    ph = min(ph, h - 4)
-    pw = min(pw, w - 4)
-    zoom = zoom[:ph, :pw]
-    frame[h-ph-4:h-4, w-pw-4:w-4] = zoom
-
-    # Border around zoom panel
+    # Paste to bottom-right
+    fy_start = h - ph - 4
+    fx_start = w - pw - 4
+    frame[fy_start:fy_start + ph, fx_start:fx_start + pw] = zoomed
     cv2.rectangle(frame,
-                  (w-pw-4, h-ph-4),
-                  (w-4, h-4),
+                  (fx_start - 1, fy_start - 1),
+                  (fx_start + pw + 1, fy_start + ph + 1),
                   (0, 255, 255), 2)
-    cv2.putText(frame, "ZOOM (4x) — right/bottom edge",
-                (w-pw-4, h-ph-20),
+    cv2.putText(frame, f"ZOOM {zoom}x",
+                (fx_start, fy_start - 6),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+
     return frame
 
 
-def main():
-    global current_zone, show_zoom, frame_w, frame_h
+# ── Main ──────────────────────────────────────────────────────────
 
-    print("╔══════════════════════════════════════════════════╗")
-    print("║  LionChief — Precision 3-Zone Calibration Tool  ║")
-    print("╠══════════════════════════════════════════════════╣")
-    print("║  TAB        = Switch zone  A → B → C            ║")
-    print("║  DRAG       = Draw zone with mouse               ║")
-    print("║  ARROWS     = Nudge TOP-LEFT corner (1px)        ║")
-    print("║  SHIFT+ARR  = Nudge BOTTOM-RIGHT corner (1px)    ║")
-    print("║  CTRL+ARR   = Large step (10px)                  ║")
-    print("║  Z          = Toggle zoom window                 ║")
-    print("║  S          = Save current zone                  ║")
-    print("║  A          = Save ALL zones and quit            ║")
-    print("║  R          = Reset current zone                 ║")
-    print("║  Q / ESC    = Quit                               ║")
-    print("╚══════════════════════════════════════════════════╝")
+def main():
+    global current_zone, current_points, polygon_closed
+    global show_zoom, frame_w, frame_h
+
+    print("╔════════════════════════════════════════════════════════╗")
+    print("║   LionChief — Precision Polygon Zone Calibration      ║")
+    print("╠════════════════════════════════════════════════════════╣")
+    print("║  LEFT CLICK   = Add polygon corner point              ║")
+    print("║  RIGHT CLICK  = Undo last point / reopen closed zone  ║")
+    print("║  DRAG point   = Move an existing corner (when closed) ║")
+    print("║  ENTER / F    = Close / finish polygon                ║")
+    print("║  TAB          = Switch zone  A → B → C               ║")
+    print("║  S            = Save current zone                     ║")
+    print("║  A            = Save ALL zones and quit               ║")
+    print("║  R            = Reset / redraw current zone           ║")
+    print("║  Z            = Toggle zoom window                    ║")
+    print("║  Q / ESC      = Quit                                  ║")
+    print("╠════════════════════════════════════════════════════════╣")
+    print("║  TIP: Click many points to follow curved track        ║")
+    print("║  TIP: Enclose BOTH sides of the rail for accuracy     ║")
+    print("╚════════════════════════════════════════════════════════╝\n")
 
     load_existing()
 
-    cap = cv2.VideoCapture(config.CAMERA_INDEX)
+    # Open camera
+    cap = cv2.VideoCapture(config.CAMERA_INDEX, cv2.CAP_DSHOW)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  config.CAMERA_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
     cap.set(cv2.CAP_PROP_FPS,          config.CAMERA_FPS)
@@ -305,148 +331,155 @@ def main():
         print(f"❌ Cannot open camera {config.CAMERA_INDEX}")
         return
 
-    ret, test = cap.read()
+    ret, test_frame = cap.read()
     if not ret:
-        print("❌ Cannot read camera frames")
+        print("❌ Cannot read from camera")
         cap.release()
         return
 
-    frame_h, frame_w = test.shape[:2]
-    print(f"\n  Camera: {frame_w}x{frame_h}")
-    print(f"  Active zone: Zone {current_zone} — "
-          f"{ZONE_DEFS[current_zone]['description']}\n")
+    frame_h, frame_w = test_frame.shape[:2]
+    print(f"  Camera: {frame_w}×{frame_h}  |  Active zone: Zone {current_zone}\n")
 
     WIN = "LionChief — Zone Calibration"
     cv2.namedWindow(WIN)
     cv2.setMouseCallback(WIN, mouse_callback)
 
-    save_flash = 0   # frames to show save flash
+    save_flash = 0   # frames to show save confirmation
 
     while True:
         ret, frame = cap.read()
         if not ret:
-            break
+            continue
 
         display = frame.copy()
 
-        # Draw current drag rectangle
-        if drawing:
-            x1 = min(drag_start[0], drag_end[0])
-            y1 = min(drag_start[1], drag_end[1])
-            x2 = max(drag_start[0], drag_end[0])
-            y2 = max(drag_start[1], drag_end[1])
-            color = ZONE_DEFS[current_zone]["color"]
-            cv2.rectangle(display, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(display, f"{x2-x1}x{y2-y1}",
-                        (x1+4, y1+16),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+        # Draw all SAVED zones (non-active) behind active zone
+        for z_key in ZONE_ORDER:
+            if z_key == current_zone:
+                continue
+            if z_key in saved_zones and len(saved_zones[z_key]) >= 3:
+                draw_zone_on_frame(display, z_key,
+                                   saved_zones[z_key], True, False)
 
-        # Draw all saved zones
-        display = draw_all_zones(display, current_zone)
+        # Draw active zone being edited
+        if current_points or polygon_closed:
+            draw_zone_on_frame(display, current_zone,
+                               current_points, polygon_closed, True)
+
+        # Cursor crosshair (when not dragging)
+        cx, cy = cursor_pos
+        cv2.line(display, (cx - 15, cy), (cx + 15, cy), (200, 200, 200), 1)
+        cv2.line(display, (cx, cy - 15), (cx, cy + 15), (200, 200, 200), 1)
+        cv2.putText(display, f"({cx},{cy})",
+                    (cx + 8, cy - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (200, 200, 200), 1)
 
         # Zoom panel
         if show_zoom:
-            display = draw_zoom_panel(display, current_zone)
+            draw_zoom_panel(display, cx, cy)
 
-        # ── Top instruction bar ──────────────────────────────────
-        color = ZONE_DEFS[current_zone]["color"]
-        bar_col = (20, 80, 20) if save_flash > 0 else (30, 30, 30)
-        cv2.rectangle(display, (0, 0), (frame_w, 50), bar_col, -1)
+        # ── Top status bar ─────────────────────────────────────
+        col   = ZONE_DEFS[current_zone]["color"]
+        bar_c = (20, 100, 20) if save_flash > 0 else (25, 25, 25)
+        cv2.rectangle(display, (0, 0), (frame_w, 52), bar_c, -1)
 
         if save_flash > 0:
-            cv2.putText(display, f"✅ Zone {current_zone} SAVED!",
+            cv2.putText(display,
+                        f"  ✅ Zone {current_zone} SAVED  —  {len(current_points)} points",
                         (10, 32),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (100, 255, 100), 2)
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.85, (100, 255, 100), 2)
             save_flash -= 1
         else:
             cv2.putText(display,
-                        f"Active: Zone {current_zone}  |  "
-                        f"TAB=Switch  S=Save  A=SaveAll  R=Reset  Z=Zoom  Q=Quit",
-                        (10, 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
+                        f"  Active: Zone {current_zone}  |  "
+                        f"TAB=Switch  ENTER=Close  S=Save  A=SaveAll  R=Reset  Z=Zoom  Q=Quit",
+                        (4, 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+            status = "CLOSED ✅" if polygon_closed else f"DRAWING — {len(current_points)} pts"
             cv2.putText(display,
-                        ZONE_DEFS[current_zone]["description"],
-                        (10, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+                        f"  {ZONE_DEFS[current_zone]['desc']}  |  {status}",
+                        (4, 42),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, col, 1)
 
-        # Zone status indicators top-right
+        # Zone status indicators (top-right)
         for i, z in enumerate(ZONE_ORDER):
-            c = ZONE_DEFS[z]["color"]
-            status = "✅" if z in zones else "○"
-            active_marker = "►" if z == current_zone else " "
+            c    = ZONE_DEFS[z]["color"]
+            tick = "✅" if z in saved_zones else "○"
+            mark = "►" if z == current_zone else " "
             cv2.putText(display,
-                        f"{active_marker} Zone {z}: {status}",
-                        (frame_w - 145, 18 + i * 16),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.45,
-                        c if z == current_zone else (150, 150, 150), 1)
+                        f"{mark} Zone {z}: {tick}",
+                        (frame_w - 150, 16 + i * 16),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.43,
+                        c if z == current_zone else (130, 130, 130), 1)
 
-        # Arrow key hint
+        # Bottom hint
         cv2.putText(display,
-                    "Arrows=nudge TL corner  |  Shift+Arrows=nudge BR corner  "
-                    "|  Ctrl+Arrows=10px step",
-                    (10, frame_h - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (140, 140, 140), 1)
+                    "Left=AddPoint  Right=Undo/Edit  Drag=MovePoint  ENTER=ClosePolygon",
+                    (6, frame_h - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.37, (120, 120, 120), 1)
 
         cv2.imshow(WIN, display)
 
         key = cv2.waitKey(20) & 0xFF
-        flags = cv2.getWindowProperty(WIN, cv2.WND_PROP_AUTOSIZE)
 
-        # ── Key handling ─────────────────────────────────────────
+        # ── Key handling ───────────────────────────────────────
         if key in (ord('q'), ord('Q'), 27):
             break
 
         elif key == 9:   # TAB — switch zone
+            # Auto-save current to buffer before switching
+            if len(current_points) >= 3 and polygon_closed:
+                saved_zones[current_zone] = [list(p) for p in current_points]
+
             idx = ZONE_ORDER.index(current_zone)
             current_zone = ZONE_ORDER[(idx + 1) % len(ZONE_ORDER)]
-            print(f"  Switched to Zone {current_zone}: "
-                  f"{ZONE_DEFS[current_zone]['description']}")
+
+            # Load saved data for new zone
+            if current_zone in saved_zones:
+                current_points = [list(p) for p in saved_zones[current_zone]]
+                polygon_closed = True
+            else:
+                current_points = []
+                polygon_closed = False
+
+            print(f"  Switched to Zone {current_zone}: {ZONE_DEFS[current_zone]['desc']}")
+
+        elif key in (13, ord('f'), ord('F')):   # ENTER or F — close polygon
+            if len(current_points) >= 3:
+                polygon_closed = True
+                print(f"  Zone {current_zone} polygon CLOSED — {len(current_points)} points")
+                print("  Press S to save, or drag points to fine-tune")
+            else:
+                print(f"  Need at least 3 points (have {len(current_points)})")
 
         elif key in (ord('s'), ord('S')):
-            if save_zone(current_zone):
+            if save_zone(current_zone, current_points, polygon_closed):
                 save_flash = 60
 
         elif key in (ord('a'), ord('A')):
-            save_all()
+            save_all(current_points, polygon_closed)
             break
 
         elif key in (ord('r'), ord('R')):
-            if current_zone in zones:
-                del zones[current_zone]
-            print(f"  Zone {current_zone} reset — draw a new one")
+            current_points = []
+            polygon_closed = False
+            if current_zone in saved_zones:
+                del saved_zones[current_zone]
+            print(f"  Zone {current_zone} RESET — draw new polygon")
 
         elif key in (ord('z'), ord('Z')):
             show_zoom = not show_zoom
-            print(f"  Zoom window: {'ON' if show_zoom else 'OFF'}")
-
-        # ── Arrow keys — fine-tune zone edges ──────────────────
-        # Regular arrows → move TOP-LEFT corner (x1, y1)
-        # Shift + arrows → move BOTTOM-RIGHT corner (x2, y2)
-        # Ctrl  + arrows → 10px step
-        elif key == 81 or key == 2424832:    # Left arrow
-            adjust_zone(current_zone, "left", 1)
-        elif key == 83 or key == 2555904:    # Right arrow
-            adjust_zone(current_zone, "right", 1)
-        elif key == 82 or key == 2490368:    # Up arrow
-            adjust_zone(current_zone, "up", 1)
-        elif key == 84 or key == 2621440:    # Down arrow
-            adjust_zone(current_zone, "down", 1)
-
-        # Check for extended key codes (platform dependent)
-        # OpenCV on Windows sends different codes
-        # We also check for the raw key values
-        if key == 0:   # some platforms send 0 for special keys
-            pass
+            print(f"  Zoom: {'ON' if show_zoom else 'OFF'}")
 
     cap.release()
     cv2.destroyAllWindows()
-
-    # Final status
-    saved = [z for z in ZONE_ORDER if z in zones]
-    print(f"\n  Zones in memory: {saved}")
-    if os.path.exists(ZONES_FILE):
-        print(f"  File saved: {ZONES_FILE}")
-    print("  Calibration tool closed.\n")
+    print("\n  Calibration complete.")
+    saved = list(saved_zones.keys())
+    missing = [z for z in ZONE_ORDER if z not in saved_zones]
+    if saved:
+        print(f"  Saved zones: {saved}")
+    if missing:
+        print(f"  ⚠️  Missing: {missing} — run again to draw them")
 
 
 if __name__ == "__main__":

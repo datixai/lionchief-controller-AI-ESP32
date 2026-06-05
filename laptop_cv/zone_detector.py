@@ -1,25 +1,27 @@
 # ══════════════════════════════════════════════════════════════════
-#  zone_detector.py  —  Three-Zone Detection Engine
+#  zone_detector.py  —  Polygon Zone Detector
+#  Harry Locomotive Project  |  Datix AI  |  May 2026
 #
 #  DUAL DETECTION — solves the stopped-train problem:
 #    Method 1: MOG2 background subtraction → catches MOVING trains
 #    Method 2: Reference frame comparison  → catches STOPPED trains
+#              (MOG2 learns stopped train as background after ~10s
+#               and stops detecting it — reference frame never forgets)
 #
-#  HOW THE STOPPED-TRAIN PROBLEM IS SOLVED:
-#    MOG2 learns the stopped train as "background" after a few seconds
-#    and stops detecting it. We fix this by keeping a reference frame
-#    taken when the zone was EMPTY. Any frame different from that
-#    reference means something is there — moving or stopped.
+#  POLYGON ZONES:
+#    Zones are polygons drawn by calibrate_zone.py.
+#    A polygon can follow any curved track — not just a rectangle.
+#    Detection mask is created using cv2.fillPoly for exact coverage.
 #
 #  ZONE LOCK:
 #    Once a train is detected in a zone, the zone stays LOCKED
-#    even if detection momentarily drops (train partially out of view,
-#    lighting flicker). Only cleared when train exits via Zone C.
+#    even if detection momentarily drops (lighting change, partial
+#    occlusion). Only cleared when main.py calls unlock_zone().
 #
 #  THREE ZONES:
-#    Zone A → inner loop approach (before shared section)
-#    Zone B → outer loop approach (before shared section)
-#    Zone C → shared section / exit
+#    Zone A → inner loop approach (inner train only)
+#    Zone B → outer loop approach (outer train only)
+#    Zone C → shared section / exit (any train)
 # ══════════════════════════════════════════════════════════════════
 
 import cv2
@@ -34,86 +36,98 @@ import config
 
 logger = logging.getLogger("ZoneDetector")
 
-ZONES_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          config.ZONES_FILE)
 
-
-# ── Zone data class ───────────────────────────────────────────────
+# ── Zone class ────────────────────────────────────────────────────
 
 class Zone:
-    """Represents a single detection zone with its own detection state."""
+    """
+    A single detection zone defined by a polygon.
+    Holds its own detection state and reference frame.
+    """
 
-    def __init__(self, key, rect, label, color):
-        self.key   = key
-        self.x1    = rect["x1"]
-        self.y1    = rect["y1"]
-        self.x2    = rect["x2"]
-        self.y2    = rect["y2"]
-        self.label = label
-        self.color = color  # BGR
+    def __init__(self, key: str, points: list, label: str,
+                 safe_color, active_color, frame_shape: tuple):
+        self.key          = key
+        self.points       = np.array(points, dtype=np.int32)
+        self.label        = label
+        self.safe_color   = safe_color    # BGR when clear
+        self.active_color = active_color  # BGR when occupied
+
+        # Pre-build mask — only recomputed if frame size changes
+        h, w = frame_shape[:2]
+        self.mask = np.zeros((h, w), dtype=np.uint8)
+        cv2.fillPoly(self.mask, [self.points], 255)
 
         # Detection state
-        self.detect_buf     = []   # rolling frame buffer
-        self.locked         = False  # zone lock — stays True until train exits
-        self.reference_frame = None  # empty-track reference for stopped train detection
+        self.detect_buf      = []    # rolling frame buffer
+        self.locked          = False # stays True until manually unlocked
+        self.reference_frame = None  # empty-track snapshot for stopped-train detection
 
     @property
-    def rect(self):
-        return (self.x1, self.y1, self.x2, self.y2)
-
-    @property
-    def area(self):
-        return (self.x2 - self.x1) * (self.y2 - self.y1)
+    def active(self) -> bool:
+        return self.locked
 
 
-# ── Load zones ────────────────────────────────────────────────────
+# ── Load zones from file ──────────────────────────────────────────
 
-def load_zones():
+def load_zones(frame_shape: tuple) -> dict:
     """
-    Load all three zones from zones.json.
-    Exits with clear error if file missing or zones incomplete.
+    Load polygon zones from zones.json.
+    Returns dict {key: Zone}.
+    Exits with a clear message if zones are missing.
     """
-    if not os.path.exists(ZONES_FILE):
+    zones_file = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), config.ZONES_FILE)
+
+    if not os.path.exists(zones_file):
         print("\n❌ zones.json not found!")
         print("   Run calibration first:")
         print("   python calibrate_zone.py")
         print("   Draw all three zones and press A to save.\n")
         sys.exit(1)
 
-    with open(ZONES_FILE, "r") as f:
+    with open(zones_file, "r") as f:
         data = json.load(f)
 
-    zones = {}
-    colors = {
-        "A": config.COLOR_ZONE_A_SAFE,
-        "B": config.COLOR_ZONE_B_SAFE,
-        "C": config.COLOR_ZONE_C_SAFE,
+    color_map = {
+        "A": (config.COLOR_ZONE_A_SAFE, config.COLOR_ZONE_A_ACTIVE),
+        "B": (config.COLOR_ZONE_B_SAFE, config.COLOR_ZONE_B_ACTIVE),
+        "C": (config.COLOR_ZONE_C_SAFE, config.COLOR_ZONE_C_ACTIVE),
     }
 
+    zones   = {}
     missing = []
+
     for key in ["A", "B", "C"]:
-        if key not in data or not data[key]:
+        if key not in data or not data[key].get("points"):
             missing.append(key)
             continue
-        z = data[key]
+
+        pts = data[key]["points"]
+        if len(pts) < 3:
+            logger.warning(f"Zone {key} has fewer than 3 points — skipping")
+            missing.append(key)
+            continue
+
+        safe_c, active_c = color_map[key]
         zones[key] = Zone(
-            key   = key,
-            rect  = z["rect"],
-            label = z.get("label", f"Zone {key}"),
-            color = colors[key],
+            key          = key,
+            points       = pts,
+            label        = data[key].get("label", f"Zone {key}"),
+            safe_color   = safe_c,
+            active_color = active_c,
+            frame_shape  = frame_shape,
         )
         logger.info(
-            f"Zone {key} loaded: ({z['rect']['x1']},{z['rect']['y1']}) → "
-            f"({z['rect']['x2']},{z['rect']['y2']})  "
-            f"size: {z.get('zone_width','?')}x{z.get('zone_height','?')}px"
+            f"Zone {key} loaded — {len(pts)} polygon points, "
+            f"area: {data[key].get('area_px','?')}px²"
         )
 
     if missing:
         print(f"\n⚠️  Missing zones: {missing}")
-        print("   Run  python calibrate_zone.py  and draw the missing zones.")
+        print("   Run python calibrate_zone.py to draw them.")
         if len(missing) == 3:
             sys.exit(1)
-        print("   Continuing with available zones...\n")
 
     return zones
 
@@ -122,15 +136,16 @@ def load_zones():
 
 class ZoneDetector:
     """
-    Three-zone camera detector for collision prevention.
+    Three-zone polygon camera detector.
 
-    Detection flow per zone:
-      1. Apply MOG2 background subtraction → catches moving trains
-      2. Compare to reference frame → catches stopped trains
-      3. Combine results with OR
-      4. Filter by minimum blob size
-      5. Require N consecutive frames (anti-flicker)
-      6. Apply zone lock — once active stays active until manually cleared
+    Per-frame detection pipeline for each zone:
+      1. Apply polygon mask to frame
+      2. MOG2 background subtraction → catches moving trains
+      3. Reference frame diff        → catches stopped trains
+      4. OR both methods
+      5. Minimum blob size filter
+      6. N-frame consistency buffer (prevents flicker triggers)
+      7. Zone lock — once active, stays until unlock_zone() called
     """
 
     def __init__(self):
@@ -144,10 +159,8 @@ class ZoneDetector:
     # ── Public API ────────────────────────────────────────────────
 
     def start(self):
-        """Load zones, open camera, init background subtractor."""
-        self._zones = load_zones()
-
-        self._cap = cv2.VideoCapture(config.CAMERA_INDEX)
+        """Open camera, load zones, warm up background model."""
+        self._cap = cv2.VideoCapture(config.CAMERA_INDEX, cv2.CAP_DSHOW)
         self._cap.set(cv2.CAP_PROP_FRAME_WIDTH,  config.CAMERA_WIDTH)
         self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
         self._cap.set(cv2.CAP_PROP_FPS,          config.CAMERA_FPS)
@@ -155,134 +168,133 @@ class ZoneDetector:
         if not self._cap.isOpened():
             raise RuntimeError(
                 f"Cannot open camera {config.CAMERA_INDEX}. "
-                "Try changing CAMERA_INDEX in config.py to 1 or 2.")
+                "Try changing CAMERA_INDEX in config.py to 0 or 2.")
 
         ret, frame = self._cap.read()
         if not ret:
             raise RuntimeError("Camera opened but cannot read frames.")
 
         self._frame_h, self._frame_w = frame.shape[:2]
-        logger.info(f"Camera: {self._frame_w}x{self._frame_h}")
+        logger.info(f"Camera: {self._frame_w}×{self._frame_h}")
 
-        # MOG2 — tuned to be LESS sensitive to subtle changes
+        # Load polygon zones using actual frame dimensions
+        self._zones = load_zones(frame.shape)
+
+        # MOG2 background subtractor — tuned for ceiling-mounted camera
         self._bg_sub = cv2.createBackgroundSubtractorMOG2(
-            history      = config.BG_HISTORY,
-            varThreshold = config.BG_THRESHOLD,
-            detectShadows= config.BG_DETECT_SHADOW
+            history       = config.BG_HISTORY,
+            varThreshold  = config.BG_THRESHOLD,
+            detectShadows = config.BG_DETECT_SHADOW,
         )
 
-        # Warm up background model with 30 frames
-        logger.info("Warming up background model (30 frames)...")
-        for _ in range(30):
+        # Warm up background model with empty-track frames
+        logger.info("Warming up background model (40 frames)...")
+        for _ in range(40):
             ret, f = self._cap.read()
             if ret:
                 self._bg_sub.apply(f)
 
-        # Take initial reference frames for each zone (empty track)
+        # Take initial reference frames (empty track snapshot)
         ret, ref_frame = self._cap.read()
         if ret:
-            gray_ref = cv2.cvtColor(ref_frame, cv2.COLOR_BGR2GRAY)
-            gray_ref = cv2.GaussianBlur(gray_ref, (21, 21), 0)
+            gray_ref = self._to_gray_blur(ref_frame)
             for zone in self._zones.values():
                 zone.reference_frame = gray_ref.copy()
-            logger.info("Reference frames captured for all zones ✅")
+            logger.info("Reference frames captured ✅")
 
         logger.info("Zone detector ready ✅")
 
-    def update_reference(self, zone_key):
+    def update_reference(self, zone_key: str):
         """
-        Capture a fresh reference frame for a zone.
-        Call this when zone is confirmed empty.
+        Refresh the reference frame for a zone.
+        Call this after confirming the zone is empty
+        (e.g., after inner train parks and outer resumes).
         """
         if zone_key not in self._zones:
             return
         ret, frame = self._cap.read()
         if ret:
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            gray = cv2.GaussianBlur(gray, (21, 21), 0)
+            gray = self._to_gray_blur(frame)
             self._zones[zone_key].reference_frame = gray
-            logger.info(f"Reference frame updated for Zone {zone_key}")
+            logger.debug(f"Reference frame updated for Zone {zone_key}")
 
-    def unlock_zone(self, zone_key):
-        """Manually unlock a zone (called by main.py after train exits)."""
+    def unlock_zone(self, zone_key: str):
+        """Unlock a zone — called by main.py after train exits."""
         if zone_key in self._zones:
-            self._zones[zone_key].locked     = False
-            self._zones[zone_key].detect_buf = []
+            z = self._zones[zone_key]
+            z.locked     = False
+            z.detect_buf = []
             logger.info(f"Zone {zone_key} unlocked")
 
-    def read_frame(self):
+    def read_frame(self) -> tuple:
         """
-        Read one frame and run detection on all three zones.
+        Read one camera frame and run detection on all three zones.
 
         Returns:
-            frame        — annotated BGR image
-            zone_states  — dict {"A": bool, "B": bool, "C": bool}
-                           True = train detected OR zone is locked
+            (frame, zone_states)
+            frame       — annotated BGR image for display
+            zone_states — dict {"A": bool, "B": bool, "C": bool}
+                          True = zone is locked (train present or was present)
         """
         ret, frame = self._cap.read()
         if not ret:
-            logger.warning("Camera read failed")
+            logger.warning("Camera frame read failed")
             return None, {}
 
         self._frame_count += 1
+        gray_blur = self._to_gray_blur(frame)
 
-        # Convert to grayscale + blur for stable detection
-        gray        = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        gray_blur   = cv2.GaussianBlur(gray, (21, 21), 0)
-
-        # MOG2 foreground mask (moving objects)
+        # MOG2 on full frame, then mask per zone
         fg_mog2 = self._bg_sub.apply(frame)
         fg_mog2 = self._clean_mask(fg_mog2)
 
         zone_states = {}
 
         for key, zone in self._zones.items():
-            x1, y1, x2, y2 = zone.rect
-
-            # ── Method 1: MOG2 (moving train) ─────────────────────
-            mog2_zone = fg_mog2[y1:y2, x1:x2]
+            # ── Method 1: MOG2 within polygon ──────────────────
+            mog2_zone     = cv2.bitwise_and(fg_mog2, fg_mog2, mask=zone.mask)
             mog2_detected = self._has_significant_blob(mog2_zone)
 
-            # ── Method 2: Reference frame diff (stopped train) ────
+            # ── Method 2: Reference frame diff within polygon ──
             ref_detected = False
             if zone.reference_frame is not None:
-                diff = cv2.absdiff(
-                    gray_blur[y1:y2, x1:x2],
-                    zone.reference_frame[y1:y2, x1:x2]
-                )
+                diff = cv2.absdiff(gray_blur, zone.reference_frame)
+                # Apply polygon mask to diff
+                diff_masked = cv2.bitwise_and(diff, diff, mask=zone.mask)
                 _, diff_thresh = cv2.threshold(
-                    diff, config.REFERENCE_DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)
+                    diff_masked,
+                    config.REFERENCE_DIFF_THRESHOLD,
+                    255,
+                    cv2.THRESH_BINARY
+                )
+                zone_area     = int(np.sum(zone.mask > 0))
+                changed_px    = int(np.sum(diff_thresh > 0))
+                changed_frac  = changed_px / max(zone_area, 1)
+                ref_detected  = changed_frac >= config.REFERENCE_MIN_CHANGED_FRAC
 
-                zone_pixels  = (x2-x1) * (y2-y1)
-                changed_frac = np.sum(diff_thresh > 0) / max(zone_pixels, 1)
-                ref_detected = changed_frac >= config.REFERENCE_MIN_CHANGED
-
-            # ── Combine: train present if EITHER method fires ─────
+            # ── Combine: detected if EITHER method fires ────────
             detected_now = mog2_detected or ref_detected
 
-            # ── Rolling frame buffer (anti-flicker) ───────────────
+            # ── Rolling frame buffer (anti-flicker) ─────────────
             zone.detect_buf.append(detected_now)
-            if len(zone.detect_buf) > config.DETECTION_FRAMES_THRESHOLD:
+            if len(zone.detect_buf) > config.DETECTION_FRAMES_REQUIRED:
                 zone.detect_buf.pop(0)
 
-            # Confirmed detection = all N frames agree
             confirmed = (
-                len(zone.detect_buf) == config.DETECTION_FRAMES_THRESHOLD
+                len(zone.detect_buf) == config.DETECTION_FRAMES_REQUIRED
                 and all(zone.detect_buf)
             )
 
-            # ── Zone lock logic ────────────────────────────────────
+            # ── Zone lock ────────────────────────────────────────
             if config.ZONE_LOCK_ENABLED:
                 if confirmed and not zone.locked:
                     zone.locked = True
                     logger.info(f"Zone {key} LOCKED — train detected")
-                # NOTE: zone.locked is only cleared by main.py
-                # calling unlock_zone() after exit is confirmed
                 zone_states[key] = zone.locked
             else:
                 zone_states[key] = confirmed
 
-        # ── Annotate frame ─────────────────────────────────────────
+        # Annotate frame
         if config.SHOW_VIDEO:
             frame = self._annotate(frame, zone_states)
 
@@ -295,10 +307,16 @@ class ZoneDetector:
 
     # ── Private helpers ───────────────────────────────────────────
 
-    def _clean_mask(self, mask):
+    def _to_gray_blur(self, frame) -> np.ndarray:
+        """Convert to grayscale and blur for stable comparison."""
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        return cv2.GaussianBlur(gray, (21, 21), 0)
+
+    def _clean_mask(self, mask) -> np.ndarray:
         """
-        Remove noise from foreground mask.
-        Larger kernel = less sensitive to small changes (light, shadows).
+        Remove noise from MOG2 mask.
+        Larger kernel = less sensitive to shadows, micro-movements.
+        Ceiling camera gets more ambient light changes — keep kernel large.
         """
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN,  kernel)
@@ -306,10 +324,11 @@ class ZoneDetector:
         mask = cv2.dilate(mask, kernel, iterations=1)
         return mask
 
-    def _has_significant_blob(self, zone_mask):
+    def _has_significant_blob(self, zone_mask) -> bool:
         """
-        Check if the mask contains any blob large enough to be a train.
-        Filters out: shadows, light flickers, insects, hands (if too small).
+        Check if mask has any blob large enough to be a train.
+        Filters out: shadows, light flickers, small insects, hands
+        (if MIN_DETECTION_AREA is set correctly for ceiling distance).
         """
         contours, _ = cv2.findContours(
             zone_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -318,61 +337,54 @@ class ZoneDetector:
                 return True
         return False
 
-    def _annotate(self, frame, zone_states):
-        """Draw zones, status bars, and detection info on the frame."""
+    def _annotate(self, frame, zone_states) -> np.ndarray:
+        """Draw polygon zones and status overlay on the display frame."""
         h, w = frame.shape[:2]
 
         for key, zone in self._zones.items():
-            x1, y1, x2, y2 = zone.rect
             active = zone_states.get(key, False)
+            col    = zone.active_color if active else zone.safe_color
 
-            # Color: red if active, zone's own safe color otherwise
-            col = (0, 0, 255) if active else zone.color
-
-            # Semi-transparent fill
+            # Semi-transparent polygon fill
             overlay = frame.copy()
-            cv2.rectangle(overlay, (x1, y1), (x2, y2),
-                          (0, 0, 180) if active else col, -1)
+            cv2.fillPoly(overlay, [zone.points], col)
             cv2.addWeighted(overlay, 0.20, frame, 0.80, 0, frame)
 
-            # Border
-            cv2.rectangle(frame, (x1, y1), (x2, y2), col, 2)
+            # Polygon outline
+            cv2.polylines(frame, [zone.points], True, col, 2)
 
             # Zone label
-            lbl = f"Zone {key} {'⚠ ACTIVE' if active else '— clear'}"
-            cv2.putText(frame, lbl,
-                        (x1 + 4, max(y1 - 6, 14)),
+            cx = int(np.mean(zone.points[:, 0]))
+            cy = int(np.mean(zone.points[:, 1]))
+            status = "⚠ ACTIVE" if active else "clear"
+            cv2.putText(frame, f"Zone {key} — {status}",
+                        (cx - 40, cy),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 2)
 
-        # ── Top status bar ────────────────────────────────────────
+        # Top status bar
         any_active = any(zone_states.values())
-        bar_col = (0, 0, 140) if any_active else (0, 80, 0)
-        cv2.rectangle(frame, (0, 0), (w, 40), bar_col, -1)
+        bar_col = (0, 0, 130) if any_active else (0, 70, 0)
+        cv2.rectangle(frame, (0, 0), (w, 38), bar_col, -1)
 
         if any_active:
-            active_zones = [k for k, v in zone_states.items() if v]
+            active_keys = [k for k, v in zone_states.items() if v]
             cv2.putText(frame,
                         f"COLLISION PREVENTION ACTIVE — Zone(s): "
-                        f"{' '.join(active_zones)} — OUTER TRAIN STOPPED",
-                        (10, 26),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.65,
+                        f"{' '.join(active_keys)} — OUTER TRAIN STOPPED",
+                        (8, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                         (255, 255, 255), 2)
         else:
-            cv2.putText(frame,
-                        "MONITORING — All zones clear",
-                        (10, 26),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.65,
-                        (200, 255, 200), 1)
+            cv2.putText(frame, "MONITORING — All zones clear",
+                        (8, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                        (180, 255, 180), 1)
 
-        # ── Zone status strip bottom ──────────────────────────────
-        strip_y = h - 28
-        cv2.rectangle(frame, (0, strip_y), (w, h), (20, 20, 20), -1)
+        # Bottom strip
+        cv2.rectangle(frame, (0, h - 24), (w, h), (20, 20, 20), -1)
         for i, (key, zone) in enumerate(self._zones.items()):
-            active = zone_states.get(key, False)
-            col    = (0, 0, 255) if active else zone.color
-            txt    = f"Zone {key}: {'LOCKED' if zone.locked else 'clear'}"
-            cv2.putText(frame, txt,
-                        (10 + i * 220, h - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, col, 1)
+            col = zone.active_color if zone_states.get(key) else zone.safe_color
+            cv2.putText(frame,
+                        f"Zone {key}: {'LOCKED' if zone.locked else 'clear'}",
+                        (10 + i * 220, h - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.48, col, 1)
 
         return frame
