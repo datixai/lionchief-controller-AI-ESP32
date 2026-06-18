@@ -1,37 +1,42 @@
 # ══════════════════════════════════════════════════════════════════
-#  main.py  —  Single Track Safe Distance Control
+#  main.py  —  Single Track Click-to-Track Safe Distance
 #  Harry Locomotive Project 3  |  Datix AI  |  June 2026
 #
-#  Two trains on outer loop track 3:
-#    Train A (front)  — runs freely, no BLE
-#    Train B (rear)   — BLE controlled, speed adjusted by camera gap
+#  No stickers. No colors. Just click on each train.
 #
-#  Camera detects both trains by colored stickers on their roofs.
-#  Speed controller adjusts Train B so it never catches Train A.
+#  HOW TO START EVERY SESSION:
+#    1. python main.py
+#    2. Camera opens — click on Train A (front)
+#    3. Click on Train B (rear)
+#    4. System tracks both and controls Train B speed automatically
 #
-#  HOW TO RUN:
-#    Step 1:  python calibrate.py  (set sticker colors + distances)
-#    Step 2:  python main.py
+#  IF TRACKER DRIFTS:
+#    Press A → click on Train A again to re-lock
+#    Press B → click on Train B again to re-lock
 #
-#  KEYBOARD (click camera window first):
-#    1-7    Set Train B cruising speed
-#    + / -  Speed up / down
-#    S      Manual STOP Train B
-#    R      Manual RESUME Train B
-#    P      Pause / resume auto control
-#    H      Horn   B = Bell   L = Lights
-#    Q/ESC  Quit cleanly
+#  KEYBOARD:
+#    LEFT CLICK   Assign train (guided — follows A then B)
+#    A            Next click re-assigns Train A
+#    B            Next click re-assigns Train B
+#    1-7          Set Train B cruising speed
+#    + / -        Speed up / down
+#    S            Manual STOP Train B
+#    R            Manual RESUME Train B
+#    P            Pause / resume auto control
+#    H            Horn    L=Lights
+#    Q / ESC      Quit
 # ══════════════════════════════════════════════════════════════════
 
 import cv2
 import time
 import logging
 import sys
+import json
 import os
 import numpy as np
 
 import config
-from train_detector  import TrainDetector, pixel_distance
+from train_detector  import ClickTracker, pixel_distance, AssignMode
 from speed_controller import SpeedController, Zone
 from ble_controller  import TrainBLEController
 
@@ -48,108 +53,168 @@ logging.basicConfig(
 logger = logging.getLogger("Main")
 
 
-# ── Banner ─────────────────────────────────────────────────────────
-def print_banner(ble_mac):
+# ── Load saved distance calibration if available ──────────────────
+def load_calibration():
+    cal_file = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), config.CALIBRATION_FILE)
+    if not os.path.exists(cal_file):
+        return
+    try:
+        with open(cal_file) as f:
+            data = json.load(f)
+        d = data.get("distances", {})
+        if d.get("danger_px"):  config.DISTANCE_DANGER  = d["danger_px"]
+        if d.get("warning_px"): config.DISTANCE_WARNING = d["warning_px"]
+        if d.get("caution_px"): config.DISTANCE_CAUTION = d["caution_px"]
+        if d.get("safe_px"):    config.DISTANCE_SAFE    = d["safe_px"]
+        if d.get("far_px"):     config.DISTANCE_FAR     = d["far_px"]
+        logger.info(
+            f"Calibration loaded — Danger:{config.DISTANCE_DANGER}  "
+            f"Warning:{config.DISTANCE_WARNING}  "
+            f"Safe:{config.DISTANCE_SAFE}")
+    except Exception as e:
+        logger.warning(f"Could not load calibration: {e}")
+
+
+# ── Globals shared with mouse callback ────────────────────────────
+_tracker   = None
+_cur_frame = None
+
+
+def mouse_callback(event, x, y, flags, param):
+    global _tracker, _cur_frame
+    if event == cv2.EVENT_LBUTTONDOWN and _tracker and _cur_frame is not None:
+        assigned = _tracker.handle_click(x, y)
+        if assigned in ("A", "B"):
+            logger.info(f"Train {assigned} clicked at ({x},{y})")
+
+
+# ── Banner ────────────────────────────────────────────────────────
+def print_banner():
     print("\n╔══════════════════════════════════════════════════════╗")
-    print("║  LionChief — Single Track Safe Distance  v1.0       ║")
+    print("║  LionChief — Click-to-Track Safe Distance  v2.0     ║")
     print("║  Datix AI  |  Ahmed Ali  |  June 2026               ║")
     print("╠══════════════════════════════════════════════════════╣")
-    print(f"║  Train A (front) : runs freely — no BLE             ║")
-    print(f"║  Train B (rear)  : {ble_mac:<33}║")
-    print(f"║  Camera          : index {config.CAMERA_INDEX:<28}║")
+    print("║  No stickers needed — just click on each train      ║")
+    print("║  Train A = front (runs freely)                      ║")
+    print(f"║  Train B = rear  (BLE: {config.TRAIN_B_MAC})   ║")
     print("╠══════════════════════════════════════════════════════╣")
-    print("║  1-7=Speed  +/-=Adjust  S=Stop  R=Resume  P=Pause   ║")
-    print("║  H=Horn  B=Bell  L=Lights  Q=Quit                   ║")
+    print("║  CLICK = assign train   A/B = re-assign             ║")
+    print("║  1-7=Speed  S=Stop  R=Resume  P=Pause  Q=Quit      ║")
     print("╚══════════════════════════════════════════════════════╝\n")
 
 
-# ── Annotate frame ────────────────────────────────────────────────
-def annotate(frame, train_a, train_b, distance, zone,
+# ── Draw overlay ──────────────────────────────────────────────────
+def annotate(frame, tracker, pos_a, pos_b, dist, zone,
              cmd_speed, user_speed, ble_ok, paused):
     h, w = frame.shape[:2]
 
-    # ── Draw train markers ────────────────────────────────────────
-    if train_a:
-        cv2.circle(frame, (train_a.x, train_a.y), 14,
-                   (0, 165, 255), 2)
-        cv2.circle(frame, (train_a.x, train_a.y), 3,
-                   (0, 165, 255), -1)
-        cv2.putText(frame, "A (front)",
-                    (train_a.x + 16, train_a.y - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 165, 255), 2)
+    # ── Train boxes and labels ────────────────────────────────────
+    if pos_a:
+        if pos_a.bbox:
+            bx,by,bw,bh = pos_a.bbox
+            col = (0,165,255) if tracker.tracking_a else (0,0,200)
+            cv2.rectangle(frame,(bx,by),(bx+bw,by+bh), col, 2)
+        cv2.circle(frame,(pos_a.x,pos_a.y), 5, (0,165,255), -1)
+        cv2.putText(frame,"A (front)",
+                    (pos_a.x+12, pos_a.y-10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0,165,255), 2)
 
-    if train_b:
-        cv2.circle(frame, (train_b.x, train_b.y), 14,
-                   (0, 220, 50), 2)
-        cv2.circle(frame, (train_b.x, train_b.y), 3,
-                   (0, 220, 50), -1)
-        cv2.putText(frame, f"B (rear) spd:{cmd_speed}",
-                    (train_b.x + 16, train_b.y - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 220, 50), 2)
+    if pos_b:
+        if pos_b.bbox:
+            bx,by,bw,bh = pos_b.bbox
+            col = (0,220,50) if tracker.tracking_b else (0,0,200)
+            cv2.rectangle(frame,(bx,by),(bx+bw,by+bh), col, 2)
+        cv2.circle(frame,(pos_b.x,pos_b.y), 5, (0,220,50), -1)
+        cv2.putText(frame, f"B spd:{cmd_speed}",
+                    (pos_b.x+12, pos_b.y-10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0,220,50), 2)
 
     # ── Distance line ─────────────────────────────────────────────
-    if train_a and train_b and distance:
-        zone_col = config.ZONE_COLORS.get(zone, (150, 150, 150))
-        cv2.line(frame, (train_a.x, train_a.y),
-                 (train_b.x, train_b.y), zone_col, 2)
-        mid_x = (train_a.x + train_b.x) // 2
-        mid_y = (train_a.y + train_b.y) // 2
-        cv2.putText(frame,
-                    f"{distance:.0f}px | {zone}",
-                    (mid_x + 6, mid_y - 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, zone_col, 2)
+    if pos_a and pos_b and dist:
+        zcol = config.ZONE_COLORS.get(zone,(150,150,150))
+        cv2.line(frame,(pos_a.x,pos_a.y),(pos_b.x,pos_b.y), zcol, 2)
+        mx = (pos_a.x+pos_b.x)//2
+        my = (pos_a.y+pos_b.y)//2
+        cv2.putText(frame, f"{dist:.0f}px | {zone}",
+                    (mx+6,my-6),cv2.FONT_HERSHEY_SIMPLEX, 0.55, zcol, 2)
 
     # ── Top status bar ────────────────────────────────────────────
-    zone_col = config.ZONE_COLORS.get(zone, (80, 80, 80))
-    bar_col  = (0, 60, 0) if zone == Zone.SAFE else \
-               (0, 0, 100) if zone == Zone.DANGER else \
-               (30, 30, 30)
-    cv2.rectangle(frame, (0, 0), (w, 44), bar_col, -1)
+    mode = tracker.mode
 
-    if paused:
-        status = "⏸  PAUSED — auto control off"
-        s_col  = (0, 200, 255)
+    if not tracker.ready:
+        # Guided assignment mode
+        bar_col = (60, 30, 0)
+        cv2.rectangle(frame,(0,0),(w,48), bar_col,-1)
+        if mode == AssignMode.A:
+            msg = "STEP 1 — Click on TRAIN A  (the front train)"
+            mcol= (0, 165, 255)
+        else:
+            msg = "STEP 2 — Click on TRAIN B  (the rear BLE train)"
+            mcol= (0, 220, 50)
+        cv2.putText(frame, msg, (8,28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, mcol, 2)
+        cv2.putText(frame, "Click directly on the train body in the image",
+                    (8,44),cv2.FONT_HERSHEY_SIMPLEX, 0.38, (180,180,180), 1)
     else:
-        status = {
-            Zone.DANGER:  f"🛑 DANGER — Train B STOPPED (gap too small)",
-            Zone.WARNING: f"⚠️  WARNING — Train B slowing to speed {cmd_speed}",
-            Zone.CAUTION: f"🔶 CAUTION — reducing speed to {cmd_speed}",
-            Zone.SAFE:    f"✅  SAFE — Train B following at speed {cmd_speed}",
-            Zone.FAR:     f"📶  FAR — catching up, speed {cmd_speed}",
-            Zone.UNKNOWN: f"❓  UNKNOWN — train not visible, holding speed {cmd_speed}",
-        }.get(zone, zone)
-        s_col = zone_col
+        # Tracking mode
+        zcol   = config.ZONE_COLORS.get(zone,(80,80,80))
+        bar_c  = (0,0,100) if zone == Zone.DANGER else \
+                 (0,60,0) if zone == Zone.SAFE else (25,25,25)
+        cv2.rectangle(frame,(0,0),(w,48), bar_c,-1)
 
-    cv2.putText(frame, status, (8, 28),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.62, (255, 255, 255), 2)
+        if paused:
+            msg  = "⏸  PAUSED — press P to resume"
+            mcol = (0,200,255)
+        elif not tracker.tracking_a or not tracker.tracking_b:
+            msg  = "⚠️  Tracker lost — press A or B then click on that train to re-lock"
+            mcol = (0,80,255)
+        else:
+            msgs = {
+                Zone.DANGER:  f"🛑 DANGER — Train B STOPPED",
+                Zone.WARNING: f"⚠️  WARNING — slowing to speed {cmd_speed}",
+                Zone.CAUTION: f"🔶 CAUTION — speed {cmd_speed}",
+                Zone.SAFE:    f"✅  SAFE — following at speed {cmd_speed}",
+                Zone.FAR:     f"📶  FAR — catching up speed {cmd_speed}",
+                Zone.UNKNOWN: f"❓  UNKNOWN — holding speed {cmd_speed}",
+            }
+            msg  = msgs.get(zone, zone)
+            mcol = zcol
 
-    # ── Bottom strip ──────────────────────────────────────────────
-    cv2.rectangle(frame, (0, h - 26), (w, h), (20, 20, 20), -1)
-    ble_col = (0, 200, 0) if ble_ok else (0, 0, 200)
+        cv2.putText(frame, msg, (8,28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255,255,255), 2)
+        cv2.putText(frame,
+                    f"A:{'✅' if tracker.tracking_a else '❌'}  "
+                    f"B:{'✅' if tracker.tracking_b else '❌'}  |  "
+                    f"BLE:{'✅' if ble_ok else '⏳'}  |  "
+                    f"Speed:{cmd_speed}/7 (usr:{user_speed})  |  "
+                    f"Gap:{f'{dist:.0f}px' if dist else '---'}  |  "
+                    f"Press A/B to re-click a train",
+                    (8,44),cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200,200,200), 1)
+
+    # ── Bottom bar ────────────────────────────────────────────────
+    cv2.rectangle(frame,(0,h-24),(w,h),(20,20,20),-1)
     cv2.putText(frame,
-                f"BLE: {'✅' if ble_ok else '⏳ connecting'}  "
-                f"| Speed: {cmd_speed}/7 (user:{user_speed})  "
-                f"| Gap: {f'{distance:.0f}px' if distance else '---'}  "
-                f"| 1-7=Speed  S=Stop  R=Resume  P=Pause  Q=Quit",
-                (8, h - 9),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200, 200, 200), 1)
+                "CLICK=assign  A/B=re-assign  1-7=Speed  "
+                "S=Stop  R=Resume  P=Pause  H=Horn  L=Lights  Q=Quit",
+                (8,h-8),cv2.FONT_HERSHEY_SIMPLEX, 0.36, (130,130,130), 1)
 
     return frame
 
 
 # ── Main ──────────────────────────────────────────────────────────
 def main():
-    print_banner(config.TRAIN_B_MAC)
+    global _tracker, _cur_frame
 
-    # Start BLE
-    logger.info("Starting BLE controller for Train B...")
+    print_banner()
+    load_calibration()
+
+    # BLE controller
+    logger.info("Starting BLE controller...")
     ble = TrainBLEController()
     ble.start()
 
-    # Start train detector
-    logger.info("Opening camera and loading calibration...")
-    detector = TrainDetector()
-
+    # Camera
     cap = cv2.VideoCapture(config.CAMERA_INDEX, cv2.CAP_DSHOW)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  config.CAMERA_WIDTH)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
@@ -160,65 +225,50 @@ def main():
         ble.shutdown()
         sys.exit(1)
 
-    ret, _ = cap.read()
-    if not ret:
-        logger.error("Camera opened but cannot read frames")
-        cap.release()
-        ble.shutdown()
-        sys.exit(1)
+    # Click tracker and speed controller
+    _tracker = ClickTracker()
+    ctrl     = SpeedController()
 
-    logger.info("Camera ready ✅")
+    # Window + mouse callback
+    cv2.namedWindow(config.WINDOW_TITLE, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(config.WINDOW_TITLE, 1280, 720)
+    cv2.setMouseCallback(config.WINDOW_TITLE, mouse_callback)
 
-    # Speed controller
-    ctrl = SpeedController()
-
-    # Display window
-    if config.SHOW_VIDEO:
-        cv2.namedWindow(config.WINDOW_TITLE, cv2.WINDOW_NORMAL)
-        cv2.resizeWindow(config.WINDOW_TITLE, 1280, 720)
-
-    # ── State ──────────────────────────────────────────────────
     paused      = False
     horn_on     = False
-    bell_on     = False
     lights_on   = False
     last_ka     = time.time()
-
-    # Statistics
     start_time  = time.time()
     frame_count = 0
     stops_sent  = 0
 
-    logger.info("System running — monitoring both trains\n")
+    logger.info("Camera open — click on Train A to begin\n")
 
     while True:
         ret, frame = cap.read()
         if not ret:
-            logger.warning("Frame read failed — retrying")
             time.sleep(0.02)
             continue
 
         frame_count += 1
         now = time.time()
+        _cur_frame = frame.copy()
 
-        # ── Keepalive ─────────────────────────────────────────
-        if now - last_ka >= config.KEEPALIVE_INTERVAL:
-            last_ka = now
-            ble.keepalive()
+        # Supply latest frame to tracker (needed for click init)
+        _tracker.set_frame(frame)
 
-        # ── Detect trains ─────────────────────────────────────
-        train_a, train_b = detector.detect(frame)
-        dist = pixel_distance(train_a, train_b)
+        # Update trackers
+        pos_a, pos_b = _tracker.update(frame)
+        dist = pixel_distance(pos_a, pos_b)
 
-        # ── Speed control ─────────────────────────────────────
-        if not paused:
-            # Use MISSING speed if a train is not visible long enough
-            if detector.is_train_a_missing() or detector.is_train_b_missing():
-                effective_dist = None   # triggers UNKNOWN zone → safe speed
-            else:
-                effective_dist = dist
+        # ── Speed control (only when both trains assigned) ────────
+        if not paused and _tracker.ready:
+            eff_dist = None if (
+                _tracker.is_train_a_missing() or
+                _tracker.is_train_b_missing()
+            ) else dist
 
-            speed, zone = ctrl.update(effective_dist)
+            speed, zone = ctrl.update(eff_dist)
 
             if ctrl.should_send_command():
                 if zone == Zone.DANGER and ble.current_speed != 0:
@@ -229,17 +279,29 @@ def main():
             speed = ble.current_speed
             zone  = Zone.UNKNOWN
 
-        # ── Annotate and display ──────────────────────────────
-        if config.SHOW_VIDEO:
-            annotate(frame, train_a, train_b, dist, zone,
-                     speed, ctrl.user_speed, ble.connected, paused)
-            cv2.imshow(config.WINDOW_TITLE, frame)
+        # Keepalive
+        if now - last_ka >= config.KEEPALIVE_INTERVAL:
+            last_ka = now
+            ble.keepalive()
 
-        # ── Keyboard ──────────────────────────────────────────
+        # ── Display ───────────────────────────────────────────────
+        annotate(frame, _tracker, pos_a, pos_b, dist, zone,
+                 speed, ctrl.user_speed, ble.connected, paused)
+        cv2.imshow(config.WINDOW_TITLE, frame)
+
+        # ── Keyboard ──────────────────────────────────────────────
         key = cv2.waitKey(1) & 0xFF
 
         if key in (ord('q'), ord('Q'), 27):
             break
+
+        elif key in (ord('a'), ord('A')):
+            _tracker.reassign_a()
+            logger.info("Re-assign: click on Train A (front)")
+
+        elif key in (ord('b'), ord('B')):
+            _tracker.reassign_b()
+            logger.info("Re-assign: click on Train B (rear)")
 
         elif key in (ord('p'), ord('P')):
             paused = not paused
@@ -247,7 +309,7 @@ def main():
             logger.info(f"Auto control {'PAUSED' if paused else 'RESUMED'}")
 
         elif key in (ord('s'), ord('S')):
-            ble.emergency_stop()
+            ble.send_stop()
             ctrl.reset()
             logger.info("Manual STOP")
 
@@ -256,45 +318,34 @@ def main():
             ctrl.reset()
             logger.info(f"Manual RESUME at speed {ctrl.user_speed}")
 
-        elif key in (ord('1'), ord('2'), ord('3'), ord('4'),
-                     ord('5'), ord('6'), ord('7')):
-            spd = int(chr(key))
-            ctrl.set_user_speed(spd)
-            if paused:
-                ble.set_speed(spd)
+        elif key in (ord('1'),ord('2'),ord('3'),ord('4'),
+                     ord('5'),ord('6'),ord('7')):
+            ctrl.set_user_speed(int(chr(key)))
 
         elif key in (ord('+'), ord('=')):
             ctrl.set_user_speed(ctrl.user_speed + 1)
-            logger.info(f"User speed → {ctrl.user_speed}")
 
         elif key in (ord('-'), ord('_')):
             ctrl.set_user_speed(max(1, ctrl.user_speed - 1))
-            logger.info(f"User speed → {ctrl.user_speed}")
 
         elif key in (ord('h'), ord('H')):
             horn_on = not horn_on
             ble.horn_on() if horn_on else ble.horn_off()
 
-        elif key in (ord('b'), ord('B')):
-            bell_on = not bell_on
-            ble.bell_on() if bell_on else ble.bell_off()
-
         elif key in (ord('l'), ord('L')):
             lights_on = not lights_on
             ble.lights_on() if lights_on else ble.lights_off()
 
-    # ── Shutdown ──────────────────────────────────────────────
+    # ── Shutdown ──────────────────────────────────────────────────
     logger.info("Shutting down...")
     ble.shutdown()
     cap.release()
     cv2.destroyAllWindows()
 
     elapsed = int(time.time() - start_time)
-    fps     = frame_count / max(elapsed, 1)
     print(f"\n{'═'*54}")
     print(f"  Session: {elapsed//60:02d}m{elapsed%60:02d}s  "
-          f"Frames: {frame_count}  FPS: {fps:.1f}  "
-          f"Stops sent: {stops_sent}")
+          f"Frames: {frame_count}  Stops: {stops_sent}")
     print(f"{'═'*54}\n")
 
 

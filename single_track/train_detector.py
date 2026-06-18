@@ -1,300 +1,293 @@
 # ══════════════════════════════════════════════════════════════════
-#  train_detector.py  —  Color Blob Train Detector
+#  train_detector.py  —  Click-to-Track Train Detector
 #  Harry Locomotive Project 3  |  Datix AI  |  June 2026
 #
-#  Detects both trains in each camera frame by the colored stickers
-#  placed on their roofs. Uses HSV color space which is more robust
-#  to lighting changes than BGR.
+#  No stickers. No colors. No calibration.
+#  User clicks on each train in the live camera feed.
+#  OpenCV CSRT tracker follows the texture/shape of each train.
 #
-#  SETUP REQUIRED:
-#    Each train must have a bright solid-color sticker on its roof.
-#    Train A (front):  one color   e.g. bright RED
-#    Train B (rear):   other color e.g. bright YELLOW
-#    Colors must be clearly different from the track and background.
+#  CSRT (Channel and Spatial Reliability Tracker) is the most
+#  accurate OpenCV built-in tracker for small objects. It works
+#  on the visual pattern under the bounding box — completely
+#  immune to other colored objects in the room.
 #
-#  Run calibrate.py to set the exact HSV ranges for your lighting.
+#  USAGE:
+#    detector = ClickTracker()
+#    detector.click(frame, x, y)     # assign next train at (x,y)
+#    pos_a, pos_b = detector.update(frame)  # call every frame
+#    detector.reassign_a()           # next click → Train A
+#    detector.reassign_b()           # next click → Train B
 # ══════════════════════════════════════════════════════════════════
 
 import cv2
 import numpy as np
-import json
-import os
-import logging
 import time
+import logging
 from collections import deque
 
 import config
 
-logger = logging.getLogger("TrainDetector")
+logger = logging.getLogger("ClickTracker")
 
 
 class TrainPosition:
-    """Holds detected position and metadata for one train."""
+    """Holds one train's current detected position."""
 
-    def __init__(self, x: int, y: int, area: float,
-                 bbox: tuple = None, confidence: float = 1.0):
-        self.x          = x         # centroid x (pixels)
-        self.y          = y         # centroid y (pixels)
-        self.area       = area      # blob area (pixels²)
-        self.bbox       = bbox      # (x, y, w, h) bounding box or None
-        self.confidence = confidence
-        self.timestamp  = time.time()
+    def __init__(self, x: int, y: int, bbox: tuple = None):
+        self.x         = x
+        self.y         = y
+        self.bbox      = bbox       # (x, y, w, h) from tracker
+        self.timestamp = time.time()
 
     def as_tuple(self):
         return (self.x, self.y)
 
     def __repr__(self):
-        return f"TrainPosition(x={self.x}, y={self.y}, area={self.area:.0f})"
+        return f"TrainPos(x={self.x}, y={self.y})"
 
 
-class TrainDetector:
+class _SingleTracker:
     """
-    Detects both trains in camera frames using colored stickers.
+    Wraps a CSRT tracker for one train.
+    Handles init, update, loss detection and position smoothing.
+    """
 
-    Detection pipeline per train per frame:
-      1. Convert BGR → HSV
-      2. GaussianBlur to reduce noise
-      3. Color mask using inRange (dual-range for red)
-      4. Morphological close + dilate to clean mask
-      5. Find contours
-      6. Filter by minimum area
-      7. Return centroid of largest matching blob
+    def __init__(self, label: str):
+        self.label      = label    # "A" or "B"
+        self._tracker   = None
+        self._active    = False    # True when tracker is running
+        self._last_seen = 0.0
+        self._pos_buf   = deque(maxlen=config.POSITION_SMOOTH_FRAMES)
+        self.last_pos   = None     # last known TrainPosition
 
-    Position smoothing:
-      A small rolling average smooths out frame-to-frame jitter
-      without introducing significant lag.
+    @property
+    def active(self) -> bool:
+        return self._active
+
+    @property
+    def initialized(self) -> bool:
+        return self._tracker is not None
+
+    def init(self, frame, click_x: int, click_y: int):
+        """
+        Start tracking at click position.
+        Creates a bounding box centered on the click.
+        """
+        half  = config.CLICK_BOX_SIZE // 2
+        h, w  = frame.shape[:2]
+        bx    = max(0, click_x - half)
+        by    = max(0, click_y - half)
+        bw    = min(config.CLICK_BOX_SIZE, w - bx)
+        bh    = min(config.CLICK_BOX_SIZE, h - by)
+        bbox  = (bx, by, bw, bh)
+
+        self._tracker = cv2.TrackerCSRT_create()
+        ok = self._tracker.init(frame, bbox)
+
+        if ok:
+            self._active    = True
+            self._last_seen = time.time()
+            self._pos_buf.clear()
+            cx = bx + bw // 2
+            cy = by + bh // 2
+            self.last_pos = TrainPosition(cx, cy, bbox)
+            self._pos_buf.append((cx, cy))
+            logger.info(
+                f"[Train {self.label}] Tracker initialized at "
+                f"({click_x},{click_y}) bbox={bbox}")
+        else:
+            logger.error(
+                f"[Train {self.label}] Tracker init failed at ({click_x},{click_y})")
+            self._active  = False
+            self._tracker = None
+
+        return ok
+
+    def update(self, frame) -> "TrainPosition | None":
+        """
+        Update tracker on new frame.
+        Returns TrainPosition on success, None if tracker lost.
+        """
+        if not self._tracker:
+            return None
+
+        ok, bbox = self._tracker.update(frame)
+
+        if ok:
+            x, y, bw, bh = [int(v) for v in bbox]
+            cx = x + bw // 2
+            cy = y + bh // 2
+
+            self._pos_buf.append((cx, cy))
+            self._last_seen = time.time()
+            self._active    = True
+
+            # Smooth position via rolling average
+            sx = int(round(sum(p[0] for p in self._pos_buf) / len(self._pos_buf)))
+            sy = int(round(sum(p[1] for p in self._pos_buf) / len(self._pos_buf)))
+
+            self.last_pos = TrainPosition(sx, sy, (x, y, bw, bh))
+            return self.last_pos
+        else:
+            # Tracker lost this frame
+            self._active = False
+            logger.debug(f"[Train {self.label}] Tracker lost frame")
+            return None
+
+    def is_missing(self) -> bool:
+        """True if tracker has not succeeded for MISSING_TIMEOUT_S."""
+        return (time.time() - self._last_seen) > config.MISSING_TIMEOUT_S
+
+    def reset(self):
+        self._tracker   = None
+        self._active    = False
+        self._pos_buf.clear()
+        self.last_pos   = None
+
+
+# ── Assign state ─────────────────────────────────────────────────
+
+class AssignMode:
+    A    = "A"     # next click → Train A
+    B    = "B"     # next click → Train B
+    DONE = "DONE"  # both assigned, tracking running
+
+
+class ClickTracker:
+    """
+    Two-train click-to-track system.
+
+    Workflow:
+      1. System starts in ASSIGN_A mode → guides Peter to click Train A
+      2. After Train A click → switches to ASSIGN_B mode
+      3. After Train B click → switches to DONE / tracking mode
+      4. Peter can press A or B at any time to re-assign a train
+         (e.g. if tracker drifts or train was out of view)
     """
 
     def __init__(self):
-        # Color ranges loaded from calibration file or config defaults
-        self._a_lower1  = None
-        self._a_upper1  = None
-        self._a_lower2  = None   # Second range for red wrap-around (HSV)
-        self._a_upper2  = None
-        self._a_dual    = False  # True if Train A color needs two HSV ranges
-
-        self._b_lower   = None
-        self._b_upper   = None
-        self._b_dual    = False
-
-        # Rolling position buffers for smoothing
-        _buf = config.POSITION_SMOOTH_FRAMES
-        self._a_pos_buf = deque(maxlen=_buf)
-        self._b_pos_buf = deque(maxlen=_buf)
-
-        # Last seen timestamps (for missing-train detection)
-        self._a_last_seen = 0.0
-        self._b_last_seen = 0.0
-
-        # Morphological cleanup kernel
-        self._kernel = cv2.getStructuringElement(
-            cv2.MORPH_ELLIPSE, (7, 7))
-
-        self._load_calibration()
+        self._tracker_a  = _SingleTracker("A")
+        self._tracker_b  = _SingleTracker("B")
+        self._mode       = AssignMode.A   # starts waiting for Train A click
+        self._last_frame = None           # stored to init tracker on click
 
     # ── Public API ────────────────────────────────────────────────
 
-    def detect(self, frame) -> tuple:
-        """
-        Detect both trains in a camera frame.
+    @property
+    def mode(self) -> str:
+        return self._mode
 
-        Args:
-            frame: BGR camera frame (numpy array)
+    @property
+    def ready(self) -> bool:
+        """True when both trains have been clicked and trackers running."""
+        return (self._tracker_a.initialized and
+                self._tracker_b.initialized)
+
+    @property
+    def tracking_a(self) -> bool:
+        return self._tracker_a.active
+
+    @property
+    def tracking_b(self) -> bool:
+        return self._tracker_b.active
+
+    def set_frame(self, frame):
+        """Store latest frame — needed to initialize tracker on click."""
+        self._last_frame = frame.copy()
+
+    def handle_click(self, x: int, y: int) -> str:
+        """
+        Handle a mouse click at (x, y).
+        Assigns the click to Train A or B based on current mode.
 
         Returns:
-            (train_a, train_b)
-            Each is TrainPosition or None if not found in this frame.
-            None means the train's sticker color was not detected.
+            "A", "B" — which train was just assigned
+            "ignored" — click happened in DONE mode (no reassign pending)
         """
-        # Pre-process: blur to reduce color noise
-        blurred = cv2.GaussianBlur(
-            frame,
-            (config.BLUR_KERNEL_SIZE, config.BLUR_KERNEL_SIZE), 0)
-        hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+        if self._last_frame is None:
+            logger.warning("Click ignored — no frame available yet")
+            return "ignored"
 
-        # Detect each train
-        raw_a = self._detect_color(
-            hsv,
-            self._a_lower1, self._a_upper1,
-            self._a_lower2 if self._a_dual else None,
-            self._a_upper2 if self._a_dual else None,
-        )
-        raw_b = self._detect_color(
-            hsv,
-            self._b_lower, self._b_upper,
-        )
+        if self._mode == AssignMode.A:
+            ok = self._tracker_a.init(self._last_frame, x, y)
+            if ok:
+                logger.info(f"Train A assigned at ({x},{y})")
+                # Auto-advance to B if B not yet set
+                if not self._tracker_b.initialized:
+                    self._mode = AssignMode.B
+                else:
+                    self._mode = AssignMode.DONE
+            return "A"
 
-        # Update seen timestamps
-        now = time.time()
-        if raw_a: self._a_last_seen = now
-        if raw_b: self._b_last_seen = now
+        elif self._mode == AssignMode.B:
+            ok = self._tracker_b.init(self._last_frame, x, y)
+            if ok:
+                logger.info(f"Train B assigned at ({x},{y})")
+                self._mode = AssignMode.DONE
+            return "B"
 
-        # Smooth positions using rolling buffer
-        smooth_a = self._smooth(raw_a, self._a_pos_buf)
-        smooth_b = self._smooth(raw_b, self._b_pos_buf)
+        else:
+            # DONE mode — click ignored unless user pressed A/B key first
+            return "ignored"
 
-        return smooth_a, smooth_b
+    def reassign_a(self):
+        """Pressing A key → next click will re-initialize Train A tracker."""
+        self._mode = AssignMode.A
+        logger.info("Re-assign mode: Train A — click on front train")
 
-    def get_masks(self, frame) -> tuple:
+    def reassign_b(self):
+        """Pressing B key → next click will re-initialize Train B tracker."""
+        self._mode = AssignMode.B
+        logger.info("Re-assign mode: Train B — click on rear train")
+
+    def update(self, frame) -> tuple:
         """
-        Return binary masks for both trains — used by calibrate.py
-        and main.py for debug display.
+        Run both trackers on current frame.
 
         Returns:
-            (mask_a, mask_b) — each is a binary numpy array
+            (pos_a, pos_b)
+            Each is TrainPosition or None if tracker lost / not initialized.
         """
-        blurred = cv2.GaussianBlur(
-            frame,
-            (config.BLUR_KERNEL_SIZE, config.BLUR_KERNEL_SIZE), 0)
-        hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+        self._last_frame = frame.copy()
 
-        mask_a = self._build_mask(
-            hsv,
-            self._a_lower1, self._a_upper1,
-            self._a_lower2 if self._a_dual else None,
-            self._a_upper2 if self._a_dual else None,
-        )
-        mask_b = self._build_mask(
-            hsv, self._b_lower, self._b_upper)
+        pos_a = self._tracker_a.update(frame) if self._tracker_a.initialized else None
+        pos_b = self._tracker_b.update(frame) if self._tracker_b.initialized else None
 
-        return mask_a, mask_b
+        return pos_a, pos_b
 
     def is_train_a_missing(self) -> bool:
-        """True if Train A has not been seen for MISSING_TIMEOUT_S."""
-        return (time.time() - self._a_last_seen) > config.MISSING_TIMEOUT_S
+        if not self._tracker_a.initialized:
+            return True
+        return self._tracker_a.is_missing()
 
     def is_train_b_missing(self) -> bool:
-        """True if Train B has not been seen for MISSING_TIMEOUT_S."""
-        return (time.time() - self._b_last_seen) > config.MISSING_TIMEOUT_S
+        if not self._tracker_b.initialized:
+            return True
+        return self._tracker_b.is_missing()
 
-    def reload_calibration(self):
-        """Reload color ranges from calibration file (call after calibrate.py)."""
-        self._a_pos_buf.clear()
-        self._b_pos_buf.clear()
-        self._a_last_seen = 0.0
-        self._b_last_seen = 0.0
-        self._load_calibration()
-        logger.info("Calibration reloaded")
+    def get_last_a(self) -> "TrainPosition | None":
+        return self._tracker_a.last_pos
 
-    # ── Private helpers ───────────────────────────────────────────
+    def get_last_b(self) -> "TrainPosition | None":
+        return self._tracker_b.last_pos
 
-    def _load_calibration(self):
-        """Load HSV color ranges from calibration.json or fall back to config defaults."""
-        cal_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            config.CALIBRATION_FILE)
+    def status_text(self) -> str:
+        """Human-readable status for display overlay."""
+        if self._mode == AssignMode.A:
+            return "Click on TRAIN A  (front train)"
+        elif self._mode == AssignMode.B:
+            return "Click on TRAIN B  (rear train)"
+        else:
+            a = "✅" if self._tracker_a.active else "❌ lost"
+            b = "✅" if self._tracker_b.active else "❌ lost"
+            return f"Tracking  A:{a}  B:{b}   Press A/B to re-click"
 
-        if os.path.exists(cal_path):
-            try:
-                with open(cal_path) as f:
-                    cal = json.load(f)
 
-                a = cal.get("train_a", {})
-                b = cal.get("train_b", {})
-
-                self._a_lower1 = np.array(a.get("hsv_lower1", config.TRAIN_A_HSV_LOWER1))
-                self._a_upper1 = np.array(a.get("hsv_upper1", config.TRAIN_A_HSV_UPPER1))
-                self._a_dual   = a.get("dual_range", config.TRAIN_A_USES_DUAL)
-                if self._a_dual:
-                    self._a_lower2 = np.array(a.get("hsv_lower2", config.TRAIN_A_HSV_LOWER2))
-                    self._a_upper2 = np.array(a.get("hsv_upper2", config.TRAIN_A_HSV_UPPER2))
-
-                self._b_lower  = np.array(b.get("hsv_lower",  config.TRAIN_B_HSV_LOWER))
-                self._b_upper  = np.array(b.get("hsv_upper",  config.TRAIN_B_HSV_UPPER))
-                self._b_dual   = b.get("dual_range", config.TRAIN_B_USES_DUAL)
-
-                logger.info(f"Calibration loaded from {cal_path}")
-                return
-
-            except Exception as e:
-                logger.warning(f"Could not load calibration ({e}) — using config defaults")
-
-        # Fall back to config defaults
-        self._a_lower1 = np.array(config.TRAIN_A_HSV_LOWER1)
-        self._a_upper1 = np.array(config.TRAIN_A_HSV_UPPER1)
-        self._a_dual   = config.TRAIN_A_USES_DUAL
-        if self._a_dual:
-            self._a_lower2 = np.array(config.TRAIN_A_HSV_LOWER2)
-            self._a_upper2 = np.array(config.TRAIN_A_HSV_UPPER2)
-        self._b_lower  = np.array(config.TRAIN_B_HSV_LOWER)
-        self._b_upper  = np.array(config.TRAIN_B_HSV_UPPER)
-        self._b_dual   = config.TRAIN_B_USES_DUAL
-        logger.info("Using default color ranges from config.py — run calibrate.py for best results")
-
-    def _build_mask(self, hsv, lower1, upper1, lower2=None, upper2=None):
-        """Build cleaned binary mask for a color range."""
-        mask = cv2.inRange(hsv, lower1, upper1)
-        if lower2 is not None and upper2 is not None:
-            mask2 = cv2.inRange(hsv, lower2, upper2)
-            mask  = cv2.bitwise_or(mask, mask2)
-        # Close small gaps, then dilate to merge nearby pixels
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._kernel)
-        mask = cv2.dilate(mask, self._kernel, iterations=1)
-        return mask
-
-    def _detect_color(self, hsv, lower1, upper1,
-                      lower2=None, upper2=None) -> "TrainPosition | None":
-        """Find largest blob of given color. Returns TrainPosition or None."""
-        mask = self._build_mask(hsv, lower1, upper1, lower2, upper2)
-
-        contours, _ = cv2.findContours(
-            mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        if not contours:
-            return None
-
-        # Pick largest blob by area
-        largest = max(contours, key=cv2.contourArea)
-        area    = cv2.contourArea(largest)
-
-        if area < config.MIN_BLOB_AREA:
-            return None
-
-        # Centroid
-        M = cv2.moments(largest)
-        if M["m00"] == 0:
-            return None
-        cx = int(M["m10"] / M["m00"])
-        cy = int(M["m01"] / M["m00"])
-
-        # Bounding box
-        x, y, w, h = cv2.boundingRect(largest)
-
-        return TrainPosition(cx, cy, area, (x, y, w, h))
-
-    def _smooth(self, pos: "TrainPosition | None",
-                buf: deque) -> "TrainPosition | None":
-        """Apply rolling average to train position."""
-        if pos is not None:
-            buf.append((pos.x, pos.y, pos.area))
-
-        if not buf:
-            return None
-
-        # Average buffered positions
-        xs    = [p[0] for p in buf]
-        ys    = [p[1] for p in buf]
-        areas = [p[2] for p in buf]
-        sx    = int(round(sum(xs) / len(xs)))
-        sy    = int(round(sum(ys) / len(ys)))
-        sa    = sum(areas) / len(areas)
-
-        # Use latest bbox if available
-        bbox = pos.bbox if pos else None
-        return TrainPosition(sx, sy, sa, bbox)
-
+# ── Distance helper ───────────────────────────────────────────────
 
 def pixel_distance(a: "TrainPosition | None",
                    b: "TrainPosition | None") -> "float | None":
-    """
-    Euclidean pixel distance between two train centroids.
-    Returns None if either train is not detected.
-
-    NOTE: This is straight-line distance, not along-track distance.
-    For trains close together on the same straight section this is
-    a good approximation. For wrap-around detection on a loop, a
-    future improvement would measure distance along the track path.
-    """
+    """Euclidean pixel distance between two train centroids."""
     if a is None or b is None:
         return None
     dx = a.x - b.x
