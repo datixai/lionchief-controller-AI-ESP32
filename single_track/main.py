@@ -188,6 +188,21 @@ def draw_overlay(frame, tracker, pos_a, pos_b,
                 "S=Stop   R=Resume   P=Pause   H=Horn   Q=Quit",
                 (8,h-8), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (130,130,130), 1)
 
+    # Flash confirmation — shown 2 seconds after each successful selection
+    now = time.time()
+    flash = []
+    if now - tracker.flash_a_time < 2.0:
+        flash.append(("Train A box SAVED  -  now drag a box around Train B", (0, 165, 255)))
+    if now - tracker.flash_b_time < 2.0:
+        flash.append(("Train B box SAVED  -  tracking started!", (0, 220, 50)))
+    for i, (msg, col) in enumerate(flash):
+        fy = h // 2 - 28 + i * 58
+        cv2.rectangle(frame, (0, fy), (w, fy + 50), (15, 15, 15), -1)
+        cv2.rectangle(frame, (0, fy), (w, fy + 50), col, 3)
+        cv2.putText(frame, msg,
+                    (30, fy + 34),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.95, col, 2)
+
     return frame
 
 

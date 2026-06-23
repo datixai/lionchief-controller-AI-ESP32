@@ -27,6 +27,25 @@ import config
 
 logger = logging.getLogger("Tracker")
 
+
+def _make_tracker():
+    """
+    Create best available tracker — works on all OpenCV versions.
+    Tries legacy CSRT first (most accurate for small objects),
+    falls back to KCF if not available.
+    """
+    for fn in [
+        lambda: cv2.legacy.TrackerCSRT_create(),
+        lambda: cv2.legacy.TrackerKCF_create(),
+        lambda: cv2.legacy.TrackerMOSSE_create(),
+    ]:
+        try:
+            return fn()
+        except AttributeError:
+            continue
+    raise RuntimeError(
+        "No OpenCV tracker found. Run: pip install opencv-contrib-python")
+
 # Selection state constants
 WAIT_A    = "WAIT_A"
 WAIT_B    = "WAIT_B"
@@ -84,6 +103,10 @@ class DragTracker:
 
         # Latest frame — needed to init tracker after drag
         self._latest_frame = None
+
+        # Flash confirmation timestamps (shown in overlay after selection)
+        self.flash_a_time = 0.0   # when Train A was last successfully assigned
+        self.flash_b_time = 0.0   # when Train B was last successfully assigned
 
     # ── Properties ────────────────────────────────────────────────
 
@@ -152,26 +175,28 @@ class DragTracker:
         cy = int(bbox[1] + bbox[3] / 2)
 
         if self.state == WAIT_A:
-            self._tracker_a = cv2.TrackerCSRT_create()
+            self._tracker_a = _make_tracker()
             ok = self._tracker_a.init(self._latest_frame, bbox)
             if ok:
                 self._active_a    = True
                 self._last_seen_a = time.time()
                 self._buf_a.clear()
                 self.last_pos_a   = TrainPosition(cx, cy, bbox)
+                self.flash_a_time = time.time()
                 self.state        = WAIT_B
                 logger.info(f"Train A selected — bbox={bbox}")
             else:
                 logger.error("Train A tracker init failed")
 
         elif self.state == WAIT_B:
-            self._tracker_b = cv2.TrackerCSRT_create()
+            self._tracker_b = _make_tracker()
             ok = self._tracker_b.init(self._latest_frame, bbox)
             if ok:
                 self._active_b    = True
                 self._last_seen_b = time.time()
                 self._buf_b.clear()
                 self.last_pos_b   = TrainPosition(cx, cy, bbox)
+                self.flash_b_time = time.time()
                 self.state        = TRACKING
                 logger.info(f"Train B selected — bbox={bbox}")
             else:
