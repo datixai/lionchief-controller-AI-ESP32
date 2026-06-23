@@ -2,19 +2,21 @@
 #  train_detector.py  —  Drag-to-Select Train Tracker
 #  Harry Locomotive Project 3  |  Datix AI  |  June 2026
 #
-#  USER DRAWS A BOX around each train by holding and dragging.
-#  OpenCV CSRT tracker then follows each train frame by frame.
+#  CRITICAL DESIGN DECISION:
+#    The tracker is initialized and updated on the DISPLAY-SIZED frame
+#    (DISPLAY_W × DISPLAY_H = 960×540), NOT the raw camera frame.
+#    The window is opened at exactly the same size (WINDOW_AUTOSIZE).
+#    Therefore mouse coordinates == pixel coordinates in the frame.
+#    No DPI scaling, no coordinate translation, no mismatch possible.
 #
-#  No stickers. No colors. No calibration files needed.
+#  HOW TO SELECT:
+#    Hold left mouse button, drag a box around the train, release.
+#    The tracker locks onto the visual texture inside the box.
+#    No stickers, no colors, works with any train appearance.
 #
-#  SELECTION STATES:
-#    WAIT_A  → waiting for user to drag a box around Train A
-#    WAIT_B  → waiting for user to drag a box around Train B
-#    TRACKING → both selected, auto-control running
-#
-#  RE-SELECT anytime:
-#    Press A → drag new box around Train A
-#    Press B → drag new box around Train B
+#  RE-SELECT:
+#    Press A key → next drag re-selects Train A
+#    Press B key → next drag re-selects Train B
 # ══════════════════════════════════════════════════════════════════
 
 import cv2
@@ -27,17 +29,24 @@ import config
 
 logger = logging.getLogger("Tracker")
 
+# State constants
+WAIT_A   = "WAIT_A"
+WAIT_B   = "WAIT_B"
+TRACKING = "TRACKING"
+
 
 def _make_tracker():
     """
-    Create best available tracker — works on all OpenCV versions.
-    Tries legacy CSRT first (most accurate for small objects),
-    falls back to KCF if not available.
+    Create best available CSRT tracker.
+    Tries all known API locations across OpenCV versions.
+    CSRT is the most accurate tracker for small objects.
     """
     for fn in [
         lambda: cv2.legacy.TrackerCSRT_create(),
         lambda: cv2.legacy.TrackerKCF_create(),
         lambda: cv2.legacy.TrackerMOSSE_create(),
+        lambda: cv2.TrackerCSRT_create(),
+        lambda: cv2.TrackerKCF_create(),
     ]:
         try:
             return fn()
@@ -46,17 +55,13 @@ def _make_tracker():
     raise RuntimeError(
         "No OpenCV tracker found. Run: pip install opencv-contrib-python")
 
-# Selection state constants
-WAIT_A    = "WAIT_A"
-WAIT_B    = "WAIT_B"
-TRACKING  = "TRACKING"
-
 
 class TrainPosition:
+    """Position of one detected train."""
     def __init__(self, x: int, y: int, bbox: tuple = None):
-        self.x         = x
-        self.y         = y
-        self.bbox      = bbox
+        self.x    = x
+        self.y    = y
+        self.bbox = bbox  # (x, y, w, h) in display pixels
         self.timestamp = time.time()
 
     def as_tuple(self):
@@ -65,54 +70,44 @@ class TrainPosition:
 
 class DragTracker:
     """
-    Two-train drag-to-select tracker.
+    Drag-to-select tracker for two trains.
 
-    User holds mouse, drags a rectangle around a train, releases.
-    CSRT tracker is initialized on the selected region.
-    Works regardless of train color or surrounding objects.
+    Works entirely in DISPLAY coordinates (960×540).
+    The display frame is passed in via set_display_frame() and update().
+    Mouse events arrive in the same coordinate space — no scaling needed.
     """
 
     def __init__(self):
-        # CSRT trackers
-        self._tracker_a = None
-        self._tracker_b = None
-
-        # Active tracking flags
+        self._tkr_a     = None
+        self._tkr_b     = None
         self._active_a  = False
         self._active_b  = False
-
-        # Last seen timestamps (for missing-train safety)
-        self._last_seen_a = 0.0
-        self._last_seen_b = 0.0
-
-        # Position smoothing buffers
-        self._buf_a = deque(maxlen=config.POSITION_SMOOTH_FRAMES)
-        self._buf_b = deque(maxlen=config.POSITION_SMOOTH_FRAMES)
-
-        # Last known positions
+        self._seen_a    = 0.0
+        self._seen_b    = 0.0
+        self._buf_a     = deque(maxlen=config.POSITION_SMOOTH_FRAMES)
+        self._buf_b     = deque(maxlen=config.POSITION_SMOOTH_FRAMES)
         self.last_pos_a = None
         self.last_pos_b = None
 
-        # Selection state
-        self.state = WAIT_A
+        # Current selection state
+        self.state      = WAIT_A
 
-        # Drag state (set by mouse callback in main.py)
-        self.drag_start  = None   # (x, y) when mouse pressed
+        # Drag gesture state
+        self.drag_start  = None   # (x, y) on mouse down
         self.drag_end    = None   # (x, y) current mouse position
-        self.is_dragging = False  # True while holding mouse button
+        self.is_dragging = False
 
-        # Latest frame — needed to init tracker after drag
-        self._latest_frame = None
+        # Latest display-sized frame for tracker init
+        self._display_frame = None
 
-        # Flash confirmation timestamps (shown in overlay after selection)
-        self.flash_a_time = 0.0   # when Train A was last successfully assigned
-        self.flash_b_time = 0.0   # when Train B was last successfully assigned
+        # Flash confirmation timestamps
+        self.flash_a_time = 0.0
+        self.flash_b_time = 0.0
 
     # ── Properties ────────────────────────────────────────────────
 
     @property
     def ready(self) -> bool:
-        """True when both trains are selected and trackers running."""
         return self._active_a and self._active_b
 
     @property
@@ -125,190 +120,188 @@ class DragTracker:
 
     # ── Frame supply ──────────────────────────────────────────────
 
-    def set_frame(self, frame):
-        """Store latest frame — needed when drag completes."""
-        self._latest_frame = frame.copy()
+    def set_display_frame(self, display_frame):
+        """Store latest display frame for use on next click."""
+        self._display_frame = display_frame.copy()
 
-    # ── Mouse events (called from main.py callback) ───────────────
+    # ── Mouse events ──────────────────────────────────────────────
 
     def on_mouse_down(self, x: int, y: int):
-        """User pressed mouse button — start drag."""
         self.drag_start  = (x, y)
         self.drag_end    = (x, y)
         self.is_dragging = True
 
     def on_mouse_move(self, x: int, y: int):
-        """User moving mouse while holding — update drag rectangle."""
         if self.is_dragging:
             self.drag_end = (x, y)
 
     def on_mouse_up(self, x: int, y: int):
-        """User released mouse — finalize drag and initialize tracker."""
         if not self.is_dragging or self.drag_start is None:
             return
+
         self.drag_end    = (x, y)
         self.is_dragging = False
 
         # Build bounding box from drag
         x1 = min(self.drag_start[0], self.drag_end[0])
         y1 = min(self.drag_start[1], self.drag_end[1])
-        x2 = max(self.drag_start[0], self.drag_end[0])
-        y2 = max(self.drag_start[1], self.drag_end[1])
-        bw = x2 - x1
-        bh = y2 - y1
+        bw = abs(self.drag_end[0] - self.drag_start[0])
+        bh = abs(self.drag_end[1] - self.drag_start[1])
 
-        # Reject tiny boxes (accidental click without real drag)
         if bw < config.MIN_BOX_SIZE or bh < config.MIN_BOX_SIZE:
-            logger.debug(f"Drag too small ({bw}x{bh}) — ignored")
+            logger.debug(f"Drag too small ({bw}×{bh}px) — ignored")
             return
 
-        bbox = (x1, y1, bw, bh)
-        self._init_tracker(bbox)
+        # Clamp to display frame bounds
+        x1 = max(0, x1)
+        y1 = max(0, y1)
+        bw = min(bw, config.DISPLAY_W - x1)
+        bh = min(bh, config.DISPLAY_H - y1)
 
-    def _init_tracker(self, bbox: tuple):
-        """Initialize CSRT tracker for the current state (A or B)."""
-        if self._latest_frame is None:
-            logger.warning("No frame available yet — drag ignored")
-            return
-
-        cx = int(bbox[0] + bbox[2] / 2)
-        cy = int(bbox[1] + bbox[3] / 2)
-
-        if self.state == WAIT_A:
-            self._tracker_a = _make_tracker()
-            ok = self._tracker_a.init(self._latest_frame, bbox)
-            if ok:
-                self._active_a    = True
-                self._last_seen_a = time.time()
-                self._buf_a.clear()
-                self.last_pos_a   = TrainPosition(cx, cy, bbox)
-                self.flash_a_time = time.time()
-                self.state        = WAIT_B
-                logger.info(f"Train A selected — bbox={bbox}")
-            else:
-                logger.error("Train A tracker init failed")
-
-        elif self.state == WAIT_B:
-            self._tracker_b = _make_tracker()
-            ok = self._tracker_b.init(self._latest_frame, bbox)
-            if ok:
-                self._active_b    = True
-                self._last_seen_b = time.time()
-                self._buf_b.clear()
-                self.last_pos_b   = TrainPosition(cx, cy, bbox)
-                self.flash_b_time = time.time()
-                self.state        = TRACKING
-                logger.info(f"Train B selected — bbox={bbox}")
-            else:
-                logger.error("Train B tracker init failed")
+        self._init_tracker((x1, y1, bw, bh))
 
     # ── Manual re-select ──────────────────────────────────────────
 
     def reselect_a(self):
-        """Press A key → next drag resets Train A tracker."""
-        self.state      = WAIT_A
-        self._active_a  = False
-        self._tracker_a = None
+        self.state     = WAIT_A
+        self._active_a = False
+        self._tkr_a    = None
         self._buf_a.clear()
-        logger.info("Re-select: drag a box around Train A")
+        logger.info("Waiting for Train A re-select")
 
     def reselect_b(self):
-        """Press B key → next drag resets Train B tracker."""
-        self.state      = WAIT_B
-        self._active_b  = False
-        self._tracker_b = None
+        self.state     = WAIT_B
+        self._active_b = False
+        self._tkr_b    = None
         self._buf_b.clear()
-        logger.info("Re-select: drag a box around Train B")
+        logger.info("Waiting for Train B re-select")
+
+    # ── Tracker init ──────────────────────────────────────────────
+
+    def _init_tracker(self, bbox: tuple):
+        """
+        Initialize CSRT tracker for the pending train (A or B).
+        bbox is in display coordinates — same as mouse coordinates.
+        Tracker is initialized on the display frame — same coordinate space.
+        """
+        if self._display_frame is None:
+            logger.warning("No display frame available yet")
+            return
+
+        x, y, bw, bh = bbox
+        cx = x + bw // 2
+        cy = y + bh // 2
+
+        if self.state == WAIT_A:
+            self._tkr_a = _make_tracker()
+            ok = self._tkr_a.init(self._display_frame, bbox)
+            if ok:
+                self._active_a   = True
+                self._seen_a     = time.time()
+                self.flash_a_time = time.time()
+                self._buf_a.clear()
+                self.last_pos_a  = TrainPosition(cx, cy, bbox)
+                self.state       = WAIT_B
+                logger.info(f"Train A locked — bbox={bbox}")
+            else:
+                logger.error("Train A tracker init failed — try dragging again")
+
+        elif self.state in (WAIT_B, TRACKING):
+            self._tkr_b = _make_tracker()
+            ok = self._tkr_b.init(self._display_frame, bbox)
+            if ok:
+                self._active_b   = True
+                self._seen_b     = time.time()
+                self.flash_b_time = time.time()
+                self._buf_b.clear()
+                self.last_pos_b  = TrainPosition(cx, cy, bbox)
+                self.state       = TRACKING
+                logger.info(f"Train B locked — bbox={bbox}")
+            else:
+                logger.error("Train B tracker init failed — try dragging again")
 
     # ── Update trackers ───────────────────────────────────────────
 
-    def update(self, frame) -> tuple:
+    def update(self, display_frame) -> tuple:
         """
-        Run both CSRT trackers on the current frame.
+        Run both trackers on the current display frame.
+
+        Args:
+            display_frame: BGR frame already resized to DISPLAY_W×DISPLAY_H.
 
         Returns:
-            (pos_a, pos_b) — each is TrainPosition or None if lost.
+            (pos_a, pos_b) — TrainPosition or None for each train.
         """
-        self._latest_frame = frame.copy()
-        now = time.time()
+        # Store for use on next click
+        self._display_frame = display_frame.copy()
 
-        pos_a = self._update_one(
-            self._tracker_a, self._buf_a,
-            self._active_a, "A", now)
-
-        pos_b = self._update_one(
-            self._tracker_b, self._buf_b,
-            self._active_b, "B", now)
+        now   = time.time()
+        pos_a = self._update_one(self._tkr_a, self._buf_a, "A",
+                                 display_frame, now)
+        pos_b = self._update_one(self._tkr_b, self._buf_b, "B",
+                                 display_frame, now)
 
         if pos_a:
-            self.last_pos_a   = pos_a
-            self._last_seen_a = now
+            self.last_pos_a = pos_a
+            self._seen_a    = now
+            self._active_a  = True
         if pos_b:
-            self.last_pos_b   = pos_b
-            self._last_seen_b = now
+            self.last_pos_b = pos_b
+            self._seen_b    = now
+            self._active_b  = True
 
         return pos_a, pos_b
 
-    def _update_one(self, tracker, buf, active, label, now):
-        if not active or tracker is None:
+    def _update_one(self, tracker, buf, label, frame, now):
+        if tracker is None:
             return None
 
-        ok, bbox = tracker.update(self._latest_frame)
-
-        if ok:
-            x, y, bw, bh = [int(v) for v in bbox]
-            cx = x + bw // 2
-            cy = y + bh // 2
-            buf.append((cx, cy))
-
-            # Smooth position
-            sx = int(round(sum(p[0] for p in buf) / len(buf)))
-            sy = int(round(sum(p[1] for p in buf) / len(buf)))
-
-            if label == "A":
-                self._active_a = True
-            else:
-                self._active_b = True
-
-            return TrainPosition(sx, sy, (x, y, bw, bh))
-        else:
+        ok, raw_bbox = tracker.update(frame)
+        if not ok:
             if label == "A":
                 self._active_a = False
             else:
                 self._active_b = False
             return None
 
-    # ── Safety checks ─────────────────────────────────────────────
+        x, y, bw, bh = [int(v) for v in raw_bbox]
+        cx = x + bw // 2
+        cy = y + bh // 2
+        buf.append((cx, cy))
+
+        # Smooth position with rolling average
+        sx = int(round(sum(p[0] for p in buf) / len(buf)))
+        sy = int(round(sum(p[1] for p in buf) / len(buf)))
+
+        return TrainPosition(sx, sy, (x, y, bw, bh))
+
+    # ── Safety ────────────────────────────────────────────────────
 
     def is_a_missing(self) -> bool:
-        if not self._tracker_a:
-            return True
-        return (time.time() - self._last_seen_a) > config.MISSING_TIMEOUT_S
+        return (not self._tkr_a or
+                (time.time() - self._seen_a) > config.MISSING_TIMEOUT_S)
 
     def is_b_missing(self) -> bool:
-        if not self._tracker_b:
-            return True
-        return (time.time() - self._last_seen_b) > config.MISSING_TIMEOUT_S
+        return (not self._tkr_b or
+                (time.time() - self._seen_b) > config.MISSING_TIMEOUT_S)
 
-    # ── Status text for display ───────────────────────────────────
+    # ── Status text ───────────────────────────────────────────────
 
     def instruction_text(self) -> str:
         if self.state == WAIT_A:
-            return "DRAG a box around  TRAIN A  (front train)"
+            return "STEP 1 — HOLD and DRAG a box around  TRAIN A  (front train)"
         elif self.state == WAIT_B:
-            return "DRAG a box around  TRAIN B  (rear BLE train)"
+            return "STEP 2 — HOLD and DRAG a box around  TRAIN B  (rear BLE train)"
         else:
-            a = "OK" if self._active_a else "LOST — press A to reselect"
-            b = "OK" if self._active_b else "LOST — press B to reselect"
-            return f"Tracking  A:{a}   B:{b}"
+            a = "OK" if self._active_a else "LOST — press A to re-select"
+            b = "OK" if self._active_b else "LOST — press B to re-select"
+            return f"Tracking   A: {a}     B: {b}"
 
 
 # ── Distance helper ───────────────────────────────────────────────
 
 def pixel_distance(a, b) -> "float | None":
-    """Euclidean pixel distance between two TrainPosition centroids."""
+    """Euclidean distance between two TrainPosition centroids."""
     if a is None or b is None:
         return None
-    dx = a.x - b.x
-    dy = a.y - b.y
-    return float(np.sqrt(dx * dx + dy * dy))
+    return float(np.sqrt((a.x - b.x)**2 + (a.y - b.y)**2))

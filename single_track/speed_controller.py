@@ -1,7 +1,5 @@
-# ══════════════════════════════════════════════════════════════════
-#  speed_controller.py  —  Gap to Speed Controller
-#  Harry Locomotive Project 3  |  Datix AI  |  June 2026
-# ══════════════════════════════════════════════════════════════════
+# speed_controller.py — Gap to Speed Controller
+# Harry Locomotive Project 3 | Datix AI | June 2026
 
 import time
 import logging
@@ -43,17 +41,13 @@ class SpeedController:
 
     def set_user_speed(self, speed: int):
         self._user_speed = max(1, min(7, speed))
+        logger.info(f"User speed → {self._user_speed}")
 
     def update(self, gap_px: "float | None") -> tuple:
-        if gap_px is None:
-            raw_zone = Zone.UNKNOWN
-        else:
-            raw_zone = self._classify(gap_px)
-
-        zone = self._hysteresis(raw_zone, gap_px)
+        raw  = self._classify(gap_px)
+        zone = self._hysteresis(raw, gap_px)
         self._current_zone = zone
 
-        # Emergency stop — skip smoothing
         if zone == Zone.DANGER:
             self._emergency = True
             self._smooth    = 0.0
@@ -61,33 +55,27 @@ class SpeedController:
 
         self._emergency = False
 
-        # Target speed per zone
-        if zone == Zone.WARNING:
-            target = config.FOLLOW_MIN_SPEED
-        elif zone == Zone.CAUTION:
-            target = config.CAUTION_SPEED
-        elif zone == Zone.SAFE:
-            target = self._user_speed
-        elif zone == Zone.FAR:
-            target = min(config.MAX_CATCH_SPEED, self._user_speed + 2)
-        else:  # UNKNOWN
-            target = config.MISSING_SAFE_SPEED
+        targets = {
+            Zone.WARNING: config.FOLLOW_MIN_SPEED,
+            Zone.CAUTION: config.CAUTION_SPEED,
+            Zone.SAFE:    self._user_speed,
+            Zone.FAR:     min(config.MAX_CATCH_SPEED, self._user_speed + 2),
+            Zone.UNKNOWN: config.MISSING_SAFE_SPEED,
+        }
+        target = targets.get(zone, self._user_speed)
 
-        # Asymmetric smoothing — brake fast, speed up slowly
         alpha = config.ALPHA_SLOW_DOWN if target < self._smooth \
                 else config.ALPHA_SPEED_UP
         self._smooth = alpha * target + (1.0 - alpha) * self._smooth
-
         speed = max(0, min(7, int(round(self._smooth))))
         return speed, zone
 
     def should_send_command(self, speed: int) -> bool:
         if self._emergency:
             return True
-        now     = time.time()
-        time_ok = (now - self._last_cmd_time) * 1000 >= config.MIN_COMMAND_INTERVAL_MS
-        spd_ok  = speed != self._last_cmd_spd
-        return time_ok and spd_ok
+        now = time.time()
+        return ((now - self._last_cmd_time) * 1000 >= config.MIN_COMMAND_INTERVAL_MS
+                and speed != self._last_cmd_spd)
 
     def command_sent(self, speed: int):
         self._last_cmd_spd  = speed
@@ -99,7 +87,8 @@ class SpeedController:
         self._last_cmd_spd  = -1
         self._emergency     = False
 
-    def _classify(self, d: float) -> str:
+    def _classify(self, d: "float | None") -> str:
+        if d is None:              return Zone.UNKNOWN
         if d < config.DISTANCE_DANGER:   return Zone.DANGER
         if d < config.DISTANCE_WARNING:  return Zone.WARNING
         if d < config.DISTANCE_CAUTION:  return Zone.CAUTION
@@ -114,27 +103,22 @@ class SpeedController:
 
         if raw == Zone.DANGER:
             return Zone.DANGER
-
         if raw == Zone.WARNING:
             if prev in (Zone.CAUTION, Zone.SAFE, Zone.FAR, Zone.UNKNOWN):
                 return Zone.WARNING if d < config.DISTANCE_WARNING else prev
             return Zone.WARNING
-
         if raw == Zone.CAUTION:
             if prev == Zone.WARNING:
                 return Zone.CAUTION if d > config.DISTANCE_WARNING + h else Zone.WARNING
             return Zone.CAUTION
-
         if raw == Zone.SAFE:
             if prev == Zone.CAUTION:
                 return Zone.SAFE if d > config.DISTANCE_CAUTION + h else Zone.CAUTION
             if prev == Zone.WARNING:
                 return Zone.SAFE if d > config.DISTANCE_WARNING + h else Zone.WARNING
             return Zone.SAFE
-
         if raw == Zone.FAR:
             if prev == Zone.SAFE:
                 return Zone.FAR if d > config.DISTANCE_FAR + h else Zone.SAFE
             return Zone.FAR
-
         return raw

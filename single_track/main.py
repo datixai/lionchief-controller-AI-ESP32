@@ -2,30 +2,18 @@
 #  main.py  —  Single Track Safe Distance
 #  Harry Locomotive Project 3  |  Datix AI  |  June 2026
 #
-#  Train A = front (manual, no BLE)
-#  Train B = rear  (BLE — speed controlled by camera gap)
+#  HOW COORDINATE FIX WORKS:
+#    Raw camera frame (1280×720) is resized to DISPLAY_W×DISPLAY_H
+#    (960×540) before ANYTHING else happens — before showing,
+#    before tracker init, before drawing.
+#    Window is opened with WINDOW_AUTOSIZE so it is exactly
+#    DISPLAY_W×DISPLAY_H — no padding, no scaling.
+#    Mouse coordinates from OpenCV therefore ALWAYS equal pixel
+#    positions in the display frame. Works on any DPI setting.
 #
-#  HOW TO START:
-#    python main.py
-#    → Camera opens
-#    → HOLD and DRAG a box around Train A (front) → release
-#    → HOLD and DRAG a box around Train B (rear)  → release
-#    → System controls Train B speed automatically
-#
-#  IF TRACKER DRIFTS:
-#    Press A → drag new box around Train A
-#    Press B → drag new box around Train B
-#
-#  KEYS:
-#    DRAG    Select / re-select train
-#    A / B   Next drag re-assigns that train
-#    1-7     Set Train B cruising speed
-#    + / -   Speed up / down
-#    S       Stop Train B
-#    R       Resume Train B
-#    P       Pause / resume auto control
-#    H       Horn    L = Lights
-#    Q/ESC   Quit
+#  CAMERA BLINK FIX:
+#    40 warm-up frames are read silently before opening the window.
+#    Auto-exposure settles during warm-up — no visible flicker.
 # ══════════════════════════════════════════════════════════════════
 
 import cv2
@@ -46,7 +34,7 @@ if config.LOG_TO_FILE:
     handlers.append(logging.FileHandler(config.LOG_FILE, mode="a"))
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    format="%(asctime)s [%(name)s] %(message)s",
     datefmt="%H:%M:%S",
     handlers=handlers,
 )
@@ -67,40 +55,24 @@ def load_calibration():
         if d.get("caution_px"): config.DISTANCE_CAUTION = d["caution_px"]
         if d.get("safe_px"):    config.DISTANCE_SAFE    = d["safe_px"]
         if d.get("far_px"):     config.DISTANCE_FAR     = d["far_px"]
-        logger.info(f"Calibration loaded — "
-                    f"D:{config.DISTANCE_DANGER} W:{config.DISTANCE_WARNING} "
-                    f"S:{config.DISTANCE_SAFE}")
+        logger.info(f"Calibration loaded — zones set")
     except Exception as e:
         logger.warning(f"Calibration load failed: {e}")
 
 
-# ── Globals shared with mouse callback ───────────────────────────
-_tracker  = None
-_frame_w  = config.CAMERA_WIDTH   # actual frame width in pixels
-_frame_h  = config.CAMERA_HEIGHT  # actual frame height in pixels
+# ── Global tracker (shared with mouse callback) ───────────────────
+_tracker = None
 
 
 def mouse_callback(event, x, y, flags, param):
     """
-    Scale mouse window coordinates → actual frame coordinates.
-    Required when window is displayed at different size than camera frame
-    (e.g. Windows DPI scaling, manual window resize).
-    Without this the tracking box initialises at the wrong position.
+    Mouse events arrive in DISPLAY coordinates (960×540).
+    Window is WINDOW_AUTOSIZE at exactly DISPLAY_W×DISPLAY_H.
+    Therefore (x, y) directly equals pixel position in display frame.
+    No scaling needed — this is the whole point of the design.
     """
-    global _tracker, _frame_w, _frame_h
     if _tracker is None:
         return
-
-    # Scale from window display size to actual frame resolution
-    try:
-        rect = cv2.getWindowImageRect(config.WINDOW_TITLE)
-        win_w, win_h = rect[2], rect[3]
-        if win_w > 0 and win_h > 0 and _frame_w > 0 and _frame_h > 0:
-            x = int(x * _frame_w / win_w)
-            y = int(y * _frame_h / win_h)
-    except Exception:
-        pass  # use raw coords if window rect unavailable
-
     if event == cv2.EVENT_LBUTTONDOWN:
         _tracker.on_mouse_down(x, y)
     elif event == cv2.EVENT_MOUSEMOVE:
@@ -109,71 +81,66 @@ def mouse_callback(event, x, y, flags, param):
         _tracker.on_mouse_up(x, y)
 
 
-# ── Overlay ───────────────────────────────────────────────────────
-def draw_overlay(frame, tracker, pos_a, pos_b,
-                 dist, zone, speed, user_speed, ble_ok, paused):
-    h, w = frame.shape[:2]
+# ── Overlay drawing ───────────────────────────────────────────────
 
-    # Train boxes
+def draw_overlay(display, tracker, pos_a, pos_b,
+                 dist, zone, speed, user_speed, ble_ok, paused):
+    h, w = display.shape[:2]
+    now  = time.time()
+
+    # ── Train bounding boxes ──────────────────────────────────────
     for pos, col, lbl in [
         (pos_a, (0, 165, 255), "A  front"),
         (pos_b, (0, 220,  50), f"B  spd:{speed}"),
     ]:
         if pos and pos.bbox:
             bx, by, bw, bh = pos.bbox
-            cv2.rectangle(frame, (bx, by), (bx+bw, by+bh), col, 2)
-            cv2.circle(frame, (pos.x, pos.y), 5, col, -1)
-            cv2.putText(frame, lbl,
-                        (pos.x+10, pos.y-10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.58, col, 2)
+            cv2.rectangle(display, (bx, by), (bx+bw, by+bh), col, 2)
+        if pos:
+            cv2.circle(display, (pos.x, pos.y), 5, col, -1)
+            cv2.putText(display, lbl, (pos.x+10, pos.y-10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, col, 2)
 
-    # Live drag rectangle — coordinates are already in frame space (scaled by mouse_callback)
+    # ── Live drag rectangle ───────────────────────────────────────
     if tracker.is_dragging and tracker.drag_start and tracker.drag_end:
         x1 = min(tracker.drag_start[0], tracker.drag_end[0])
         y1 = min(tracker.drag_start[1], tracker.drag_end[1])
         x2 = max(tracker.drag_start[0], tracker.drag_end[0])
         y2 = max(tracker.drag_start[1], tracker.drag_end[1])
-        # Clamp to frame bounds
-        x1 = max(0, min(x1, w-1)); y1 = max(0, min(y1, h-1))
-        x2 = max(0, min(x2, w-1)); y2 = max(0, min(y2, h-1))
-        dcol = (0,165,255) if tracker.state==WAIT_A else (0,220,50)
-        cv2.rectangle(frame,(x1,y1),(x2,y2), dcol, 2)
-        label = "Train A" if tracker.state==WAIT_A else "Train B"
-        cv2.putText(frame, label,
-                    (x1+4, max(y1-6, 12)),
+        dcol = (0,165,255) if tracker.state == WAIT_A else (0,220,50)
+        cv2.rectangle(display, (x1,y1), (x2,y2), dcol, 2)
+        lbl = "Train A" if tracker.state == WAIT_A else "Train B"
+        cv2.putText(display, lbl, (x1+4, max(y1-6, 14)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, dcol, 2)
 
-    # Distance line
+    # ── Distance line ─────────────────────────────────────────────
     if pos_a and pos_b and dist:
         zcol = config.ZONE_COLORS.get(zone, (150,150,150))
-        cv2.line(frame,(pos_a.x,pos_a.y),(pos_b.x,pos_b.y), zcol, 2)
-        mx = (pos_a.x+pos_b.x)//2
-        my = (pos_a.y+pos_b.y)//2
-        cv2.putText(frame, f"{dist:.0f}px | {zone}",
-                    (mx+6, my-6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.55, zcol, 2)
+        cv2.line(display, (pos_a.x,pos_a.y), (pos_b.x,pos_b.y), zcol, 2)
+        mx = (pos_a.x + pos_b.x) // 2
+        my = (pos_a.y + pos_b.y) // 2
+        cv2.putText(display, f"{dist:.0f}px | {zone}",
+                    (mx+6, my-6), cv2.FONT_HERSHEY_SIMPLEX, 0.55, zcol, 2)
 
-    # ── Top bar ───────────────────────────────────────────────────
+    # ── Top status bar ────────────────────────────────────────────
     if tracker.state in (WAIT_A, WAIT_B):
-        # Selection mode — big clear instruction
-        cv2.rectangle(frame,(0,0),(w,56),(40,25,0),-1)
-        if tracker.state == WAIT_A:
-            msg  = "STEP 1:  Hold mouse + DRAG a box around  TRAIN A  (front train)"
-            mcol = (0, 165, 255)
-        else:
-            msg  = "STEP 2:  Hold mouse + DRAG a box around  TRAIN B  (rear BLE train)"
-            mcol = (0, 220, 50)
-        cv2.putText(frame, msg,
-                    (8,30), cv2.FONT_HERSHEY_SIMPLEX, 0.62, mcol, 2)
-        cv2.putText(frame,
+        # Guided selection mode
+        cv2.rectangle(display, (0,0), (w,52), (40,25,0), -1)
+        col  = (0,165,255) if tracker.state == WAIT_A else (0,220,50)
+        msg  = ("STEP 1:  Hold + DRAG a box around  TRAIN A  (front train)"
+                if tracker.state == WAIT_A else
+                "STEP 2:  Hold + DRAG a box around  TRAIN B  (rear BLE train)")
+        cv2.putText(display, msg, (8,28),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.62, col, 2)
+        cv2.putText(display,
                     "Draw the box around the whole train body — it does not need to be perfect",
-                    (8,50), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (180,180,180), 1)
+                    (8,46), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (180,180,180), 1)
     else:
-        # Tracking mode
-        zcol  = config.ZONE_COLORS.get(zone,(80,80,80))
-        barc  = (0,0,90)  if zone==Zone.DANGER else \
-                (0,55,0)  if zone==Zone.SAFE   else (25,25,25)
-        cv2.rectangle(frame,(0,0),(w,48), barc,-1)
+        # Tracking mode status bar
+        zcol = config.ZONE_COLORS.get(zone, (80,80,80))
+        barc = (0,0,90)  if zone == Zone.DANGER else \
+               (0,55,0)  if zone == Zone.SAFE   else (25,25,25)
+        cv2.rectangle(display, (0,0), (w,48), barc, -1)
 
         if paused:
             msg  = "PAUSED — press P to resume"
@@ -184,67 +151,67 @@ def draw_overlay(frame, tracker, pos_a, pos_b,
         else:
             msgs = {
                 Zone.DANGER:  f"STOP — gap too small",
-                Zone.WARNING: f"WARNING — slowing Train B to speed {speed}",
+                Zone.WARNING: f"WARNING — slowing Train B (speed {speed})",
                 Zone.CAUTION: f"CAUTION — speed {speed}",
                 Zone.SAFE:    f"SAFE — following at speed {speed}",
-                Zone.FAR:     f"FAR — catching up, speed {speed}",
+                Zone.FAR:     f"FAR — catching up (speed {speed})",
                 Zone.UNKNOWN: f"Train not visible — holding speed {speed}",
             }
             msg  = msgs.get(zone, zone)
             mcol = zcol
 
-        cv2.putText(frame, msg,
-                    (8,26), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255,255,255), 2)
-        cv2.putText(frame,
+        cv2.putText(display, msg, (8,26),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255,255,255), 2)
+        cv2.putText(display,
                     f"A:{'OK' if tracker.tracking_a else 'LOST'}  "
                     f"B:{'OK' if tracker.tracking_b else 'LOST'}  |  "
                     f"BLE:{'OK' if ble_ok else 'connecting'}  |  "
-                    f"Speed:{speed}/7 (user:{user_speed})  |  "
+                    f"Spd:{speed}/7 usr:{user_speed}  |  "
                     f"Gap:{f'{dist:.0f}px' if dist else '---'}  |  "
-                    f"A/B = re-select train",
-                    (8,44), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (200,200,200), 1)
+                    f"A/B = re-select",
+                    (8,44), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (200,200,200), 1)
 
-    # Bottom bar
-    cv2.rectangle(frame,(0,h-24),(w,h),(20,20,20),-1)
-    cv2.putText(frame,
-                "DRAG=select   A/B=reselect   1-7=Speed   "
-                "S=Stop   R=Resume   P=Pause   H=Horn   Q=Quit",
-                (8,h-8), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (130,130,130), 1)
-
-    # Flash confirmation — shown 2 seconds after each successful selection
-    now = time.time()
+    # ── Flash confirmation (2 seconds after each selection) ────────
     flash = []
     if now - tracker.flash_a_time < 2.0:
-        flash.append(("Train A box SAVED  -  now drag a box around Train B", (0, 165, 255)))
+        flash.append(("  Train A box SAVED  —  now drag a box around Train B",
+                       (0, 165, 255)))
     if now - tracker.flash_b_time < 2.0:
-        flash.append(("Train B box SAVED  -  tracking started!", (0, 220, 50)))
+        flash.append(("  Train B box SAVED  —  tracking started!",
+                       (0, 220, 50)))
     for i, (msg, col) in enumerate(flash):
-        fy = h // 2 - 28 + i * 58
-        cv2.rectangle(frame, (0, fy), (w, fy + 50), (15, 15, 15), -1)
-        cv2.rectangle(frame, (0, fy), (w, fy + 50), col, 3)
-        cv2.putText(frame, msg,
-                    (30, fy + 34),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.95, col, 2)
+        fy = h // 2 - 26 + i * 56
+        cv2.rectangle(display, (0, fy), (w, fy+50), (15,15,15), -1)
+        cv2.rectangle(display, (0, fy), (w, fy+50), col, 3)
+        cv2.putText(display, msg, (20, fy+34),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.85, col, 2)
 
-    return frame
+    # ── Bottom bar ────────────────────────────────────────────────
+    cv2.rectangle(display, (0,h-22), (w,h), (20,20,20), -1)
+    cv2.putText(display,
+                "DRAG=select   A/B=reselect   1-7=Speed   "
+                "S=Stop   R=Resume   P=Pause   H=Horn   Q=Quit",
+                (8,h-7), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (130,130,130), 1)
+
+    return display
 
 
 # ── Main ──────────────────────────────────────────────────────────
+
 def main():
     global _tracker
 
     print("\n╔══════════════════════════════════════════════════════╗")
-    print("║  LionChief — Safe Distance Control  v3.0            ║")
+    print("║  LionChief — Safe Distance Control  v4.0            ║")
     print("║  Datix AI  |  June 2026                             ║")
     print("╠══════════════════════════════════════════════════════╣")
-    print("║  Camera opens → DRAG box around Train A             ║")
-    print("║                → DRAG box around Train B            ║")
-    print("║  System controls Train B speed automatically        ║")
+    print("║  Camera warms up → window opens → drag boxes        ║")
+    print("║  Train A = front (manual)  Train B = rear (BLE)     ║")
     print("╚══════════════════════════════════════════════════════╝\n")
 
     load_calibration()
 
-    # BLE
+    # BLE controller
     ble = TrainBLEController()
     ble.start()
 
@@ -259,17 +226,22 @@ def main():
         ble.shutdown()
         sys.exit(1)
 
+    # ── CAMERA WARM-UP ────────────────────────────────────────────
+    # Read frames silently so auto-exposure settles before window opens.
+    # This prevents the camera blink/flicker on startup.
+    logger.info(f"Camera warming up ({config.CAMERA_WARMUP_FRAMES} frames)...")
+    for _ in range(config.CAMERA_WARMUP_FRAMES):
+        cap.read()
+    logger.info("Camera ready ✅ — opening window")
+
+    # ── WINDOW ────────────────────────────────────────────────────
+    # WINDOW_AUTOSIZE: window is exactly DISPLAY_W×DISPLAY_H — no more, no less.
+    # Mouse coordinates therefore always equal pixel positions in the frame.
+    cv2.namedWindow(config.WINDOW_TITLE, cv2.WINDOW_AUTOSIZE)
+
     _tracker = DragTracker()
     ctrl     = SpeedController()
 
-    # Read first frame to get actual camera resolution
-    ret, first = cap.read()
-    if ret:
-        _frame_h, _frame_w = first.shape[:2]
-        logger.info(f"Camera frame size: {_frame_w}x{_frame_h}")
-
-    cv2.namedWindow(config.WINDOW_TITLE, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(config.WINDOW_TITLE, 1280, 720)
     cv2.setMouseCallback(config.WINDOW_TITLE, mouse_callback)
 
     paused      = False
@@ -283,7 +255,7 @@ def main():
     logger.info("Ready — drag a box around Train A to begin\n")
 
     while True:
-        ret, frame = cap.read()
+        ret, raw_frame = cap.read()
         if not ret:
             time.sleep(0.02)
             continue
@@ -291,11 +263,21 @@ def main():
         frame_count += 1
         now = time.time()
 
-        _tracker.set_frame(frame)
-        pos_a, pos_b = _tracker.update(frame)
+        # ── RESIZE TO FIXED DISPLAY SIZE ──────────────────────────
+        # This is the key fix. Everything downstream (tracker, drawing,
+        # mouse) works in this one consistent coordinate space.
+        display = cv2.resize(raw_frame,
+                             (config.DISPLAY_W, config.DISPLAY_H),
+                             interpolation=cv2.INTER_LINEAR)
+
+        # Supply display frame to tracker for drag init
+        _tracker.set_display_frame(display)
+
+        # Update trackers — pass display frame
+        pos_a, pos_b = _tracker.update(display)
         dist = pixel_distance(pos_a, pos_b)
 
-        # Speed control — only when both trains selected
+        # ── Speed control ─────────────────────────────────────────
         if not paused and _tracker.ready:
             eff_dist = None if (
                 _tracker.is_a_missing() or _tracker.is_b_missing()
@@ -317,25 +299,27 @@ def main():
             last_ka = now
             ble.keepalive()
 
-        # Draw and show
-        draw_overlay(frame, _tracker, pos_a, pos_b,
+        # ── Draw and show ─────────────────────────────────────────
+        draw_overlay(display, _tracker, pos_a, pos_b,
                      dist, zone, speed, ctrl.user_speed,
                      ble.connected, paused)
-        cv2.imshow(config.WINDOW_TITLE, frame)
+        cv2.imshow(config.WINDOW_TITLE, display)
 
+        # ── Keyboard ──────────────────────────────────────────────
         key = cv2.waitKey(1) & 0xFF
 
         if key in (ord('q'), ord('Q'), 27):
             break
         elif key in (ord('a'), ord('A')):
             _tracker.reselect_a()
-            logger.info("Re-select: drag box around Train A")
+            logger.info("Re-select: drag box on Train A")
         elif key in (ord('b'), ord('B')):
             _tracker.reselect_b()
-            logger.info("Re-select: drag box around Train B")
+            logger.info("Re-select: drag box on Train B")
         elif key in (ord('p'), ord('P')):
             paused = not paused
             ctrl.reset()
+            logger.info(f"{'PAUSED' if paused else 'RESUMED'}")
         elif key in (ord('s'), ord('S')):
             ble.send_stop(); ctrl.reset()
         elif key in (ord('r'), ord('R')):
@@ -358,7 +342,6 @@ def main():
     ble.shutdown()
     cap.release()
     cv2.destroyAllWindows()
-
     elapsed = int(time.time() - start_time)
     print(f"\n  Session: {elapsed//60:02d}m{elapsed%60:02d}s  "
           f"Frames:{frame_count}  Stops:{stops_sent}\n")

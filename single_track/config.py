@@ -2,13 +2,14 @@
 #  config.py  —  Single Track Safe Distance
 #  Harry Locomotive Project 3  |  Datix AI  |  June 2026
 #
-#  Train A = front train  (manual, no BLE)
-#  Train B = rear train   (BLE controlled)
+#  Train A = front (manual, no BLE)   — ORANGE box
+#  Train B = rear  (BLE controlled)   — GREEN  box
 #
-#  HOW TO SELECT TRAINS:
-#    Camera opens → HOLD and DRAG a box around Train A → release
-#    Then HOLD and DRAG a box around Train B → release
-#    System starts tracking and controlling automatically
+#  HOW SELECTION WORKS:
+#    Camera opens at DISPLAY_W x DISPLAY_H (fixed size window).
+#    Mouse coordinates always equal pixel coordinates in the image.
+#    No DPI scaling problems. No coordinate mismatch.
+#    Hold and drag a box around each train — that is all.
 # ══════════════════════════════════════════════════════════════════
 
 # ── TRAIN B BLE ───────────────────────────────────────────────────
@@ -44,24 +45,40 @@ SPEED_CMDS = [
 ]
 
 # ── CAMERA ────────────────────────────────────────────────────────
-CAMERA_INDEX  = 1
-CAMERA_WIDTH  = 1280
+CAMERA_INDEX  = 1      # USB ceiling camera
+CAMERA_WIDTH  = 1280   # capture resolution
 CAMERA_HEIGHT = 720
 CAMERA_FPS    = 30
 
-# ── TRACKER ───────────────────────────────────────────────────────
-MIN_BOX_SIZE           = 15    # minimum drag size in pixels to accept
-POSITION_SMOOTH_FRAMES = 3     # rolling average frames for smooth position
+# ── DISPLAY — KEY FIX FOR COORDINATE ACCURACY ─────────────────────
+# Frame is resized to this size BEFORE being shown AND before tracker
+# is initialized. Window is opened at exactly this size (AUTOSIZE).
+# Mouse coordinates from OpenCV therefore always equal pixel positions
+# in the displayed image. No DPI scaling, no coordinate mismatch.
+#
+# ★ If your screen is small and the window is too big, reduce these.
+#   Maintain 16:9 ratio: 960×540, 1024×576, 800×450, 640×360
+DISPLAY_W = 960
+DISPLAY_H = 540
 
-# ── DISTANCE ZONES (pixels) ───────────────────────────────────────
-# Adjust these after seeing your actual camera image.
+# Camera warm-up frames to read silently before opening window.
+# This lets auto-exposure settle so the camera does not blink/flicker
+# when the window first appears.
+CAMERA_WARMUP_FRAMES = 40
+
+# ── TRACKER ───────────────────────────────────────────────────────
+MIN_BOX_SIZE           = 15   # minimum drag size (pixels) to accept
+POSITION_SMOOTH_FRAMES = 3    # rolling average for smooth position
+
+# ── DISTANCE ZONES (pixels, in DISPLAY resolution) ────────────────
+# These are in 960×540 display pixels — same as what you see on screen.
 # Run calibrate.py to set them interactively.
-DISTANCE_DANGER  = 80
-DISTANCE_WARNING = 150
-DISTANCE_CAUTION = 230
-DISTANCE_SAFE    = 320
-DISTANCE_FAR     = 450
-HYSTERESIS_OFFSET = 20
+DISTANCE_DANGER  = 60
+DISTANCE_WARNING = 110
+DISTANCE_CAUTION = 170
+DISTANCE_SAFE    = 240
+DISTANCE_FAR     = 340
+HYSTERESIS_OFFSET = 15
 
 CALIBRATION_FILE = "calibration.json"
 
@@ -71,7 +88,7 @@ MAX_CATCH_SPEED    = 7
 FOLLOW_MIN_SPEED   = 2
 CAUTION_SPEED      = 3
 
-# ── SPEED SMOOTHING ───────────────────────────────────────────────
+# ── SMOOTHING ─────────────────────────────────────────────────────
 ALPHA_SLOW_DOWN         = 0.7
 ALPHA_SPEED_UP          = 0.25
 MIN_COMMAND_INTERVAL_MS = 300
@@ -84,9 +101,9 @@ MISSING_SAFE_SPEED = 2
 RECONNECT_INTERVAL = 5.0
 KEEPALIVE_INTERVAL = 20.0
 
-# ── DISPLAY ───────────────────────────────────────────────────────
-SHOW_VIDEO   = True
+# ── DISPLAY COLORS ────────────────────────────────────────────────
 WINDOW_TITLE = "LionChief — Safe Distance Control"
+SHOW_VIDEO   = True
 
 ZONE_COLORS = {
     "DANGER":  (0,   0, 200),
