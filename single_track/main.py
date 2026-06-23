@@ -74,13 +74,33 @@ def load_calibration():
         logger.warning(f"Calibration load failed: {e}")
 
 
-# ── Global tracker (shared with mouse callback) ───────────────────
-_tracker = None
+# ── Globals shared with mouse callback ───────────────────────────
+_tracker  = None
+_frame_w  = config.CAMERA_WIDTH   # actual frame width in pixels
+_frame_h  = config.CAMERA_HEIGHT  # actual frame height in pixels
 
 
 def mouse_callback(event, x, y, flags, param):
+    """
+    Scale mouse window coordinates → actual frame coordinates.
+    Required when window is displayed at different size than camera frame
+    (e.g. Windows DPI scaling, manual window resize).
+    Without this the tracking box initialises at the wrong position.
+    """
+    global _tracker, _frame_w, _frame_h
     if _tracker is None:
         return
+
+    # Scale from window display size to actual frame resolution
+    try:
+        rect = cv2.getWindowImageRect(config.WINDOW_TITLE)
+        win_w, win_h = rect[2], rect[3]
+        if win_w > 0 and win_h > 0 and _frame_w > 0 and _frame_h > 0:
+            x = int(x * _frame_w / win_w)
+            y = int(y * _frame_h / win_h)
+    except Exception:
+        pass  # use raw coords if window rect unavailable
+
     if event == cv2.EVENT_LBUTTONDOWN:
         _tracker.on_mouse_down(x, y)
     elif event == cv2.EVENT_MOUSEMOVE:
@@ -107,17 +127,20 @@ def draw_overlay(frame, tracker, pos_a, pos_b,
                         (pos.x+10, pos.y-10),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.58, col, 2)
 
-    # Live drag rectangle
+    # Live drag rectangle — coordinates are already in frame space (scaled by mouse_callback)
     if tracker.is_dragging and tracker.drag_start and tracker.drag_end:
         x1 = min(tracker.drag_start[0], tracker.drag_end[0])
         y1 = min(tracker.drag_start[1], tracker.drag_end[1])
         x2 = max(tracker.drag_start[0], tracker.drag_end[0])
         y2 = max(tracker.drag_start[1], tracker.drag_end[1])
+        # Clamp to frame bounds
+        x1 = max(0, min(x1, w-1)); y1 = max(0, min(y1, h-1))
+        x2 = max(0, min(x2, w-1)); y2 = max(0, min(y2, h-1))
         dcol = (0,165,255) if tracker.state==WAIT_A else (0,220,50)
         cv2.rectangle(frame,(x1,y1),(x2,y2), dcol, 2)
         label = "Train A" if tracker.state==WAIT_A else "Train B"
         cv2.putText(frame, label,
-                    (x1+4, y1-6),
+                    (x1+4, max(y1-6, 12)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, dcol, 2)
 
     # Distance line
@@ -238,6 +261,12 @@ def main():
 
     _tracker = DragTracker()
     ctrl     = SpeedController()
+
+    # Read first frame to get actual camera resolution
+    ret, first = cap.read()
+    if ret:
+        _frame_h, _frame_w = first.shape[:2]
+        logger.info(f"Camera frame size: {_frame_w}x{_frame_h}")
 
     cv2.namedWindow(config.WINDOW_TITLE, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(config.WINDOW_TITLE, 1280, 720)

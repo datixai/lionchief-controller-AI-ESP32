@@ -96,3 +96,15 @@
 16:59:34 [INFO] Tracker: Train B selected — bbox=(898, 236, 207, 58)
 16:59:38 [ERROR] BLE: BLE connect failed: Device with address 60:F9:FB:49:94:C9 was not found.
 16:59:43 [INFO] BLE: Connecting to Train B: 60:F9:FB:49:94:C9
+21:07:03 [INFO] BLE: Connecting to Train B: 60:F9:FB:49:94:C9
+21:07:06 [INFO] Main: Camera frame size: 1280x720
+21:07:06 [INFO] Main: Ready — drag a box around Train A to begin
+
+21:07:10 [INFO] Tracker: Train A selected — bbox=(283, 250, 95, 52)
+21:07:16 [INFO] Tracker: Train B selected — bbox=(924, 304, 171, 70)
+21:07:19 [ERROR] BLE: BLE connect failed: Device with address 60:F9:FB:49:94:C9 was not found.
+21:07:24 [INFO] BLE: Connecting to Train B: 60:F9:FB:49:94:C9
+21:07:30 [INFO] Tracker: Re-select: drag a box around Train B
+21:07:30 [INFO] Main: Re-select: drag box around Train B
+21:07:32 [INFO] Tracker: Train B selected — bbox=(558, 313, 171, 41)
+21:07:39 [ERROR] BLE: BLE connect failed: Device with address 60:F9:FB:49:94:C9 was not found.
