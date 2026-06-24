@@ -1,17 +1,6 @@
 # ══════════════════════════════════════════════════════════════════
-#  config.py  —  Single Track Safe Distance v6.0
+#  config.py  —  Single Track Safe Distance v8.0
 #  Harry Locomotive Project 3  |  Datix AI  |  June 2026
-#
-#  4-BOX SYSTEM:
-#    User manually drags 4 boxes:
-#      Train A HEAD (leading edge of front train)
-#      Train A TAIL (trailing edge of front train)
-#      Train B HEAD (leading edge of rear BLE train)
-#      Train B TAIL (trailing edge of rear BLE train)
-#
-#    Each box has its own LOCAL SEARCH RADIUS.
-#    MOG2 only looks for motion near each box.
-#    People walking far away are completely ignored.
 # ══════════════════════════════════════════════════════════════════
 
 # ── TRAIN B BLE ───────────────────────────────────────────────────
@@ -52,54 +41,52 @@ CAMERA_WIDTH  = 1280
 CAMERA_HEIGHT = 720
 CAMERA_FPS    = 30
 
+# Fixed display size — window = frame = mouse coords always match
 DISPLAY_W = 960
 DISPLAY_H = 540
 CAMERA_WARMUP_FRAMES = 40
 
 # ── FILES ─────────────────────────────────────────────────────────
 CALIBRATION_FILE = "calibration.json"
-TABLE_MASK_FILE  = "table_mask.json"   # polygon around the table
+TABLE_MASK_FILE  = "table_mask.json"
 
 # ── TRACKER ───────────────────────────────────────────────────────
-MIN_BOX_SIZE = 15     # minimum drag size in pixels to accept a box
+MIN_BOX_SIZE = 15          # minimum drag size to accept a selection
 
-# LOCAL SEARCH RADIUS — each box only looks for motion within this
-# many pixels of its last known position.
-# ★ KEY: keeps people walking outside this radius from affecting tracking
+# Local search radius — each train only searches this far from
+# its last known position. Keeps people walking far away undetected.
 # ★ TUNE UP if train moves fast and tracker loses it
-# ★ TUNE DOWN if nearby people still interfere
-SEARCH_RADIUS = 80    # pixels in display coordinates (960×540)
+SEARCH_RADIUS = 90         # pixels in 960×540 display coords
 
-MIN_BLOB_AREA = 80    # minimum blob area inside local search to count
+MIN_BLOB_AREA = 80         # minimum blob area inside search circle
 
-# Velocity smoothing for each box
-VELOCITY_ALPHA = 0.4
-
-# Rolling average frames for smooth position display
 POSITION_SMOOTH_FRAMES = 4
+VELOCITY_ALPHA         = 0.4
+
+# Tracking circle display
+# Circle is drawn around each tracked train — radius scales with blob size
+CIRCLE_RADIUS_MIN = 18    # minimum circle radius (pixels)
+CIRCLE_RADIUS_MAX = 50    # maximum circle radius (pixels)
 
 # ── MOG2 ──────────────────────────────────────────────────────────
 MOG2_HISTORY       = 300
 MOG2_VAR_THRESHOLD = 45   # ★ TUNE UP if false detections remain
 MOG2_LEARNING_RATE = 0.005
 
-# ── DISTANCE ZONES (pixels in 960×540 display) ────────────────────
-# Distance is measured HEAD-to-TAIL between facing edges.
-DISTANCE_DANGER  = 80    # STOP immediately
-DISTANCE_WARNING = 130   # slow to min speed
-DISTANCE_CAUTION = 190   # reduce speed
-DISTANCE_SAFE    = 270   # follow at user speed
-DISTANCE_FAR     = 380   # gap too large — catch up
+# ── DISTANCE ZONES (pixels in 960×540) ───────────────────────────
+DISTANCE_DANGER  = 90
+DISTANCE_WARNING = 140
+DISTANCE_CAUTION = 200
+DISTANCE_SAFE    = 280
+DISTANCE_FAR     = 400
 HYSTERESIS_OFFSET = 18
-
-CALIBRATION_FILE = "calibration.json"
 
 # ── SPEED ─────────────────────────────────────────────────────────
 DEFAULT_SPEED      = 5
 MAX_CATCH_SPEED    = 7
 FOLLOW_MIN_SPEED   = 2
 CAUTION_SPEED      = 3
-ESCAPE_MIN_SPEED   = 5   # speed when Train A is behind Train B
+ESCAPE_MIN_SPEED   = 5
 ESCAPE_MAX_SPEED   = 7
 
 # ── SMOOTHING ─────────────────────────────────────────────────────
@@ -117,7 +104,6 @@ KEEPALIVE_INTERVAL = 20.0
 
 # ── DISPLAY ───────────────────────────────────────────────────────
 WINDOW_TITLE = "LionChief — Safe Distance"
-SHOW_VIDEO   = True
 
 ZONE_COLORS = {
     "DANGER":  (0,   0, 200),
