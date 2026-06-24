@@ -58,6 +58,7 @@ CAMERA_WARMUP_FRAMES = 40
 
 # ── FILES ─────────────────────────────────────────────────────────
 CALIBRATION_FILE = "calibration.json"
+TABLE_MASK_FILE  = "table_mask.json"   # polygon around the table
 
 # ── TRACKER ───────────────────────────────────────────────────────
 MIN_BOX_SIZE = 15     # minimum drag size in pixels to accept a box

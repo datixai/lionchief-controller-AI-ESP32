@@ -23,6 +23,8 @@
 
 import cv2
 import numpy as np
+import json
+import os
 import time
 import logging
 from collections import deque
@@ -225,6 +227,9 @@ class DragTracker:
         self._kernel = cv2.getStructuringElement(
             cv2.MORPH_ELLIPSE, (5, 5))
 
+        # Table boundary mask (blocks detection outside the table)
+        self._table_mask = self._load_table_mask()
+
         # 4 independent boxes
         self._ah = _BoxTracker("A-HEAD")
         self._at = _BoxTracker("A-TAIL")
@@ -329,6 +334,36 @@ class DragTracker:
         self.state = WAIT_B_HEAD
         logger.info("Re-select Train B: drag HEAD then TAIL")
 
+    # ── Table mask ────────────────────────────────────────────────
+
+    def set_table_mask(self, mask):
+        """Set table boundary mask (np.uint8 array, 255 inside table)."""
+        self._table_mask = mask
+        logger.info("Table mask applied to tracker")
+
+    def has_table_mask(self) -> bool:
+        return self._table_mask is not None
+
+    def _load_table_mask(self):
+        """Load saved table mask from file if it exists."""
+        mask_file = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            config.TABLE_MASK_FILE)
+        if not os.path.exists(mask_file):
+            return None
+        try:
+            with open(mask_file) as f:
+                data = json.load(f)
+            pts  = np.array(data["points"], dtype=np.int32)
+            mask = np.zeros(
+                (config.DISPLAY_H, config.DISPLAY_W), dtype=np.uint8)
+            cv2.fillPoly(mask, [pts], 255)
+            logger.info(f"Table mask loaded — {len(pts)} points")
+            return mask
+        except Exception as e:
+            logger.warning(f"Table mask load failed: {e}")
+            return None
+
     # ── Update ────────────────────────────────────────────────────
 
     def update(self, display_frame) -> tuple:
@@ -343,6 +378,11 @@ class DragTracker:
                             learningRate=config.MOG2_LEARNING_RATE)
         fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN,  self._kernel)
         fg = cv2.dilate(fg,       self._kernel, iterations=1)
+
+        # Apply table boundary mask — motion outside table is zeroed out
+        if self._table_mask is not None:
+            fg = cv2.bitwise_and(fg, self._table_mask)
+
         self._last_fg = fg
 
         # Update each box independently with local search
