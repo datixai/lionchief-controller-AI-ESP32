@@ -1,5 +1,11 @@
-# speed_controller.py — Gap to Speed Controller
-# Harry Locomotive Project 3 | Datix AI | June 2026
+# ══════════════════════════════════════════════════════════════════
+#  speed_controller.py — Gap-to-Speed with Direction Awareness
+#  Harry Locomotive Project 3  |  Datix AI  |  June 2026
+#
+#  TWO MODES:
+#    NORMAL  — Train B is behind Train A → slow B to maintain gap
+#    ESCAPE  — Train A is behind Train B → speed B up to stay ahead
+# ══════════════════════════════════════════════════════════════════
 
 import time
 import logging
@@ -15,6 +21,7 @@ class Zone:
     SAFE    = "SAFE"
     FAR     = "FAR"
     UNKNOWN = "UNKNOWN"
+    ESCAPE  = "ESCAPE"   # Train A is chasing Train B
 
 
 class SpeedController:
@@ -43,7 +50,43 @@ class SpeedController:
         self._user_speed = max(1, min(7, speed))
         logger.info(f"User speed → {self._user_speed}")
 
-    def update(self, gap_px: "float | None") -> tuple:
+    def update(self, gap_px: "float | None",
+               a_chasing_b: bool = False) -> tuple:
+        """
+        Calculate target speed for Train B.
+
+        Args:
+            gap_px:      pixel gap between trains (facing edges)
+            a_chasing_b: True when Train A is BEHIND Train B and
+                         heading toward it — B must speed up
+
+        Returns:
+            (speed, zone)
+        """
+        # ── ESCAPE MODE: A is behind B ─────────────────────────────
+        if a_chasing_b:
+            self._emergency     = False
+            self._current_zone  = Zone.ESCAPE
+
+            if gap_px is None:
+                target = config.ESCAPE_MIN_SPEED
+            elif gap_px < config.DISTANCE_DANGER:
+                # Very close — maximum escape speed
+                target = config.ESCAPE_MAX_SPEED
+            elif gap_px < config.DISTANCE_SAFE:
+                # A is nearby behind → run fast
+                target = config.ESCAPE_MAX_SPEED
+            else:
+                # A is far behind — moderate escape
+                target = max(config.ESCAPE_MIN_SPEED, self._user_speed)
+
+            # Fast acceleration in escape mode (safety)
+            self._smooth = 0.8 * target + 0.2 * self._smooth
+            speed = max(0, min(7, int(round(self._smooth))))
+            self._current_zone = Zone.ESCAPE
+            return speed, Zone.ESCAPE
+
+        # ── NORMAL MODE: B is behind A ────────────────────────────
         raw  = self._classify(gap_px)
         zone = self._hysteresis(raw, gap_px)
         self._current_zone = zone
@@ -51,7 +94,7 @@ class SpeedController:
         if zone == Zone.DANGER:
             self._emergency = True
             self._smooth    = 0.0
-            return 0, zone
+            return 0, Zone.DANGER
 
         self._emergency = False
 
@@ -89,10 +132,10 @@ class SpeedController:
 
     def _classify(self, d: "float | None") -> str:
         if d is None:              return Zone.UNKNOWN
-        if d < config.DISTANCE_DANGER:   return Zone.DANGER
-        if d < config.DISTANCE_WARNING:  return Zone.WARNING
-        if d < config.DISTANCE_CAUTION:  return Zone.CAUTION
-        if d < config.DISTANCE_FAR:      return Zone.SAFE
+        if d < config.DISTANCE_DANGER:  return Zone.DANGER
+        if d < config.DISTANCE_WARNING: return Zone.WARNING
+        if d < config.DISTANCE_CAUTION: return Zone.CAUTION
+        if d < config.DISTANCE_FAR:     return Zone.SAFE
         return Zone.FAR
 
     def _hysteresis(self, raw: str, d: "float | None") -> str:
@@ -101,8 +144,7 @@ class SpeedController:
         prev = self._current_zone
         h    = config.HYSTERESIS_OFFSET
 
-        if raw == Zone.DANGER:
-            return Zone.DANGER
+        if raw == Zone.DANGER:  return Zone.DANGER
         if raw == Zone.WARNING:
             if prev in (Zone.CAUTION, Zone.SAFE, Zone.FAR, Zone.UNKNOWN):
                 return Zone.WARNING if d < config.DISTANCE_WARNING else prev

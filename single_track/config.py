@@ -2,14 +2,8 @@
 #  config.py  —  Single Track Safe Distance
 #  Harry Locomotive Project 3  |  Datix AI  |  June 2026
 #
-#  Train A = front (manual, no BLE)   — ORANGE box
-#  Train B = rear  (BLE controlled)   — GREEN  box
-#
-#  HOW SELECTION WORKS:
-#    Camera opens at DISPLAY_W x DISPLAY_H (fixed size window).
-#    Mouse coordinates always equal pixel coordinates in the image.
-#    No DPI scaling problems. No coordinate mismatch.
-#    Hold and drag a box around each train — that is all.
+#  Train A = front (manual, no BLE)   — ORANGE
+#  Train B = rear  (BLE controlled)   — GREEN
 # ══════════════════════════════════════════════════════════════════
 
 # ── TRAIN B BLE ───────────────────────────────────────────────────
@@ -45,74 +39,51 @@ SPEED_CMDS = [
 ]
 
 # ── CAMERA ────────────────────────────────────────────────────────
-CAMERA_INDEX  = 1      # USB ceiling camera
-CAMERA_WIDTH  = 1280   # capture resolution
+CAMERA_INDEX  = 1
+CAMERA_WIDTH  = 1280
 CAMERA_HEIGHT = 720
 CAMERA_FPS    = 30
 
-# ── DISPLAY — KEY FIX FOR COORDINATE ACCURACY ─────────────────────
-# Frame is resized to this size BEFORE being shown AND before tracker
-# is initialized. Window is opened at exactly this size (AUTOSIZE).
-# Mouse coordinates from OpenCV therefore always equal pixel positions
-# in the displayed image. No DPI scaling, no coordinate mismatch.
-#
-# ★ If your screen is small and the window is too big, reduce these.
-#   Maintain 16:9 ratio: 960×540, 1024×576, 800×450, 640×360
+# ── DISPLAY — fixed size so mouse coords == pixel coords ──────────
 DISPLAY_W = 960
 DISPLAY_H = 540
-
-# Camera warm-up frames to read silently before opening window.
-# This lets auto-exposure settle so the camera does not blink/flicker
-# when the window first appears.
 CAMERA_WARMUP_FRAMES = 40
 
+# ── FILES ─────────────────────────────────────────────────────────
+CALIBRATION_FILE = "calibration.json"
+TRACK_MASK_FILE  = "track_mask.json"   # optional — drawn in calibrate.py
+
 # ── TRACKER ───────────────────────────────────────────────────────
-MIN_BOX_SIZE           = 15   # minimum drag size (pixels) to accept
-POSITION_SMOOTH_FRAMES = 5    # rolling average for smooth position
+MIN_BOX_SIZE           = 15
+POSITION_SMOOTH_FRAMES = 5
 
 # ── MOG2 MOTION DETECTION ─────────────────────────────────────────
-# Trains are the ONLY moving objects on the layout.
-# MOG2 background subtraction detects every moving blob every frame.
-# A blob near the last known train position = that train.
-# Works through turns and any speed — tracks MOTION not APPEARANCE.
+MOG2_HISTORY       = 300
+MOG2_VAR_THRESHOLD = 40   # ★ TUNE UP if people cause false detections
+                           # ★ TUNE DOWN if trains not detected
+MOG2_LEARNING_RATE = 0.005
+MIN_BLOB_AREA      = 150  # ★ TUNE UP to ignore small noise blobs
+MAX_MATCH_DIST     = 180  # ★ TUNE UP if fast train loses tracking
+VELOCITY_ALPHA     = 0.4
 
-MOG2_HISTORY       = 300   # frames to build background model
-                            # higher = more stable background
-MOG2_VAR_THRESHOLD = 40    # detection sensitivity
-                            # lower = more sensitive (catches slower trains)
-                            # higher = ignores small lighting changes
-MOG2_LEARNING_RATE = 0.005 # how fast background model updates
-                            # keep LOW so stopped trains don't vanish
-                            # from model for ~5-10 minutes of stillness
-
-MIN_BLOB_AREA      = 150   # minimum pixel area to count as a train
-                            # ★ TUNE: increase if getting false detections
-                            # ★ TUNE: decrease if real trains not detected
-
-MAX_MATCH_DIST     = 180   # maximum pixels between predicted position
-                            # and detected blob to count as same train
-                            # ★ TUNE: increase if fast train loses tracking
-
-VELOCITY_ALPHA     = 0.4   # velocity smoothing (0=no update, 1=instant)
-                            # lower = smoother but slower to react to turns
-
-# ── DISTANCE ZONES (pixels, in DISPLAY resolution) ────────────────
-# These are in 960×540 display pixels — same as what you see on screen.
-# Run calibrate.py to set them interactively.
-DISTANCE_DANGER  = 60
-DISTANCE_WARNING = 110
-DISTANCE_CAUTION = 170
-DISTANCE_SAFE    = 240
-DISTANCE_FAR     = 340
-HYSTERESIS_OFFSET = 15
-
-CALIBRATION_FILE = "calibration.json"
+# ── DISTANCE ZONES (pixels in 960×540 display) ────────────────────
+# Increased from previous values to give Train B more stopping room.
+DISTANCE_DANGER   = 100   # STOP — emergency
+DISTANCE_WARNING  = 160   # slow to FOLLOW_MIN_SPEED
+DISTANCE_CAUTION  = 220   # slow to CAUTION_SPEED
+DISTANCE_SAFE     = 300   # follow at user speed
+DISTANCE_FAR      = 420   # gap too large — catch up
+HYSTERESIS_OFFSET = 20
 
 # ── SPEED ─────────────────────────────────────────────────────────
 DEFAULT_SPEED      = 5
 MAX_CATCH_SPEED    = 7
 FOLLOW_MIN_SPEED   = 2
 CAUTION_SPEED      = 3
+# When Train A is BEHIND Train B (A chasing B on the loop):
+# Train B speeds up to escape and maintain safe distance ahead
+ESCAPE_MIN_SPEED   = 4    # minimum escape speed
+ESCAPE_MAX_SPEED   = 7    # maximum escape speed
 
 # ── SMOOTHING ─────────────────────────────────────────────────────
 ALPHA_SLOW_DOWN         = 0.7
@@ -127,7 +98,7 @@ MISSING_SAFE_SPEED = 2
 RECONNECT_INTERVAL = 5.0
 KEEPALIVE_INTERVAL = 20.0
 
-# ── DISPLAY COLORS ────────────────────────────────────────────────
+# ── DISPLAY ───────────────────────────────────────────────────────
 WINDOW_TITLE = "LionChief — Safe Distance Control"
 SHOW_VIDEO   = True
 
@@ -138,6 +109,7 @@ ZONE_COLORS = {
     "SAFE":    (0, 180,  60),
     "FAR":     (200, 160, 0),
     "UNKNOWN": (120, 120, 120),
+    "ESCAPE":  (255, 100, 200),   # Train A is chasing Train B
 }
 
 # ── LOGGING ───────────────────────────────────────────────────────

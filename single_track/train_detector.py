@@ -1,30 +1,28 @@
 # ══════════════════════════════════════════════════════════════════
-#  train_detector.py  —  MOG2 Motion-Based Train Tracker
+#  train_detector.py  —  MOG2 Motion Tracker with Head/Tail + Track Mask
 #  Harry Locomotive Project 3  |  Datix AI  |  June 2026
 #
-#  WHY MOG2 INSTEAD OF OPTICAL FLOW / CSRT:
-#    Optical flow and CSRT track APPEARANCE — how the train looks.
-#    Small ceiling-camera trains have little texture, rotate on turns,
-#    and move fast → appearance changes → box leaves the train.
+#  IMPROVEMENTS IN THIS VERSION:
+#    1. TRACK MASK — polygon drawn around track in calibrate.py.
+#       MOG2 detection only runs INSIDE the mask.
+#       People walking outside the track are completely ignored.
 #
-#    MOG2 tracks MOTION — what is moving in the frame.
-#    Trains are the only moving objects on the layout.
-#    Every frame: find all moving blobs → match nearest blob to each
-#    train's last known position → that blob IS the train.
-#    Works through turns, speed changes, curves — always.
+#    2. HEAD / TAIL BOXES — two boxes per train derived automatically
+#       from blob bounding box + velocity direction each frame.
+#       Gap calculation uses the FACING EDGES (tail-to-head distance)
+#       not center-to-center — much more accurate stopping distance.
 #
-#  HOW IT WORKS:
-#    1. User drags a box to set INITIAL position for each train
-#    2. MOG2 builds background model (learns the static layout)
-#    3. Every frame: background subtraction finds moving blobs
-#    4. Each blob is matched to the nearest train by distance
-#    5. Velocity prediction smooths position when no blob is near
-#    6. Low learning rate prevents stopped trains from disappearing
-#       from the background model for several minutes
+#    3. DIRECTION DETECTION — detects when Train A is BEHIND Train B
+#       (wrap-around on the loop). Returns a flag so speed_controller
+#       can tell Train B to speed up instead of slow down.
+#
+#    4. MOG2 BLOB DETECTION (unchanged — it was working well).
 # ══════════════════════════════════════════════════════════════════
 
 import cv2
 import numpy as np
+import json
+import os
 import time
 import logging
 from collections import deque
@@ -37,38 +35,65 @@ WAIT_A   = "WAIT_A"
 WAIT_B   = "WAIT_B"
 TRACKING = "TRACKING"
 
+HEAD_BOX  = 18   # size of displayed head/tail indicator boxes (pixels)
+
 
 class TrainPosition:
-    def __init__(self, x: int, y: int, bbox: tuple = None):
-        self.x         = x
-        self.y         = y
-        self.bbox      = bbox
+    def __init__(self, x: int, y: int, bbox: tuple = None,
+                 head: tuple = None, tail: tuple = None,
+                 vel: tuple = (0.0, 0.0)):
+        self.x    = x
+        self.y    = y
+        self.bbox = bbox     # full bounding box  (x,y,w,h)
+        self.head = head     # leading edge point (x,y)  — direction of travel
+        self.tail = tail     # trailing edge point (x,y)
+        self.vel  = vel      # (vx, vy) velocity in pixels/frame
         self.timestamp = time.time()
 
     def as_tuple(self):
         return (self.x, self.y)
 
 
-# ── Per-train state tracker with velocity prediction ───────────────
+# ── Track mask loader ─────────────────────────────────────────────
+
+def _load_track_mask(display_w: int, display_h: int):
+    """
+    Load track boundary polygon from track_mask.json.
+    Returns a binary mask (np.uint8, 255 inside track, 0 outside).
+    Returns None if no mask file exists — detection covers full frame.
+    """
+    mask_file = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), config.TRACK_MASK_FILE)
+    if not os.path.exists(mask_file):
+        return None
+    try:
+        with open(mask_file) as f:
+            data = json.load(f)
+        pts = np.array(data["points"], dtype=np.int32)
+        mask = np.zeros((display_h, display_w), dtype=np.uint8)
+        cv2.fillPoly(mask, [pts], 255)
+        logger.info(f"Track mask loaded — {len(pts)} polygon points")
+        return mask
+    except Exception as e:
+        logger.warning(f"Track mask load failed: {e}")
+        return None
+
+
+# ── Per-train velocity tracker ────────────────────────────────────
 
 class _VelocityTracker:
-    """
-    Tracks one train's position and velocity.
-    Position is updated from detected motion blobs.
-    When no blob is found, velocity prediction fills the gap.
-    """
 
     def __init__(self, label: str):
         self.label      = label
-        self._px        = None    # current x position (float)
-        self._py        = None    # current y position (float)
-        self._vx        = 0.0    # velocity x (pixels/frame)
-        self._vy        = 0.0    # velocity y (pixels/frame)
+        self._px        = None
+        self._py        = None
+        self._vx        = 0.0
+        self._vy        = 0.0
         self._active    = False
-        self._last_seen = 0.0    # time last matched to a real blob
-        self._buf       = deque(maxlen=config.POSITION_SMOOTH_FRAMES)
+        self._last_seen = 0.0
         self._last_bbox = None
-        self._frames_without_blob = 0
+        self._buf       = deque(maxlen=config.POSITION_SMOOTH_FRAMES)
+        self._no_blob   = 0
 
     @property
     def active(self) -> bool:
@@ -78,68 +103,68 @@ class _VelocityTracker:
     def initialized(self) -> bool:
         return self._px is not None
 
+    @property
+    def velocity(self):
+        return (self._vx, self._vy)
+
     def set_initial_position(self, x: int, y: int):
-        """Called once when user drags a box to select this train."""
         self._px        = float(x)
         self._py        = float(y)
         self._vx        = 0.0
         self._vy        = 0.0
         self._active    = True
         self._last_seen = time.time()
+        self._no_blob   = 0
         self._buf.clear()
         self._buf.append((x, y))
-        self._frames_without_blob = 0
-        logger.info(f"[Train {self.label}] Initial position: ({x},{y})")
+        logger.info(f"[{self.label}] Initial position ({x},{y})")
 
-    def predict_next(self) -> tuple:
-        """Predicted position for next frame based on current velocity."""
+    def predict_next(self):
         if self._px is None:
             return 0.0, 0.0
         return (self._px + self._vx, self._py + self._vy)
 
-    def update_from_blob(self, blob_cx: int, blob_cy: int,
-                         blob_bbox: tuple):
-        """
-        Blob was matched to this train. Update position and velocity.
-        Velocity is updated as exponential moving average so it
-        responds to direction changes on turns without being jerky.
-        """
+    def update_from_blob(self, cx: int, cy: int, bbox: tuple):
         if self._px is not None:
-            dx = blob_cx - self._px
-            dy = blob_cy - self._py
+            dx = cx - self._px
+            dy = cy - self._py
             a  = config.VELOCITY_ALPHA
             self._vx = a * dx + (1.0 - a) * self._vx
             self._vy = a * dy + (1.0 - a) * self._vy
-
-        self._px        = float(blob_cx)
-        self._py        = float(blob_cy)
+        self._px        = float(cx)
+        self._py        = float(cy)
+        self._last_bbox = bbox
         self._last_seen = time.time()
         self._active    = True
-        self._last_bbox = blob_bbox
-        self._frames_without_blob = 0
-        self._buf.append((blob_cx, blob_cy))
+        self._no_blob   = 0
+        self._buf.append((cx, cy))
 
     def predict_update(self):
-        """
-        No blob was matched. Advance position by velocity.
-        Used when train is between blobs (e.g. short gap in detection).
-        """
         if self._px is None:
             return
-        self._px += self._vx
-        self._py += self._vy
-        self._frames_without_blob += 1
-        # Gradually decay velocity if no blob for a while (train may be stopping)
-        if self._frames_without_blob > 10:
+        self._px   += self._vx
+        self._py   += self._vy
+        self._no_blob += 1
+        if self._no_blob > 10:
             self._vx *= 0.9
             self._vy *= 0.9
 
+    def is_missing(self) -> bool:
+        return (time.time() - self._last_seen) > config.MISSING_TIMEOUT_S
+
+    def reset(self):
+        self._px = None; self._py = None
+        self._vx = 0.0;  self._vy = 0.0
+        self._active = False
+        self._last_bbox = None
+        self._buf.clear()
+        self._no_blob = 0
+
     def get_position(self) -> "TrainPosition | None":
-        """Return smoothed current position."""
         if not self._active or self._px is None:
             return None
 
-        # Smooth using rolling buffer
+        # Smoothed centre
         if self._buf:
             sx = int(round(sum(p[0] for p in self._buf) / len(self._buf)))
             sy = int(round(sum(p[1] for p in self._buf) / len(self._buf)))
@@ -147,81 +172,93 @@ class _VelocityTracker:
             sx = int(round(self._px))
             sy = int(round(self._py))
 
-        # Estimate bbox: use last real blob bbox, or small default
+        # Full bounding box
         if self._last_bbox:
             bx, by, bw, bh = self._last_bbox
-            # Shift bbox to current smoothed position
+            # Re-centre bbox on smoothed position
             bx = sx - bw // 2
             by = sy - bh // 2
             bbox = (bx, by, bw, bh)
         else:
-            s    = 30
+            s    = 25
             bbox = (sx - s, sy - s, s * 2, s * 2)
 
-        return TrainPosition(sx, sy, bbox)
+        # Head / tail derived from velocity direction
+        head, tail = self._head_tail(sx, sy)
 
-    def is_missing(self) -> bool:
-        return (time.time() - self._last_seen) > config.MISSING_TIMEOUT_S
+        return TrainPosition(sx, sy, bbox, head, tail,
+                             (self._vx, self._vy))
 
-    def reset(self):
-        self._px        = None
-        self._py        = None
-        self._vx        = 0.0
-        self._vy        = 0.0
-        self._active    = False
-        self._last_bbox = None
-        self._buf.clear()
-        self._frames_without_blob = 0
+    def _head_tail(self, cx: int, cy: int):
+        """
+        Derive head (leading edge) and tail (trailing edge) positions
+        from current velocity direction.
+        Returns (head_pt, tail_pt) or (None, None) if not moving.
+        """
+        speed = np.sqrt(self._vx ** 2 + self._vy ** 2)
+        if speed < 0.4:   # too slow to determine direction reliably
+            return None, None
 
-    @property
-    def current_xy(self):
-        return self._px, self._py
+        nvx = self._vx / speed
+        nvy = self._vy / speed
+
+        # Use bbox extent or a fixed reach
+        if self._last_bbox:
+            reach = max(self._last_bbox[2], self._last_bbox[3]) // 2
+        else:
+            reach = 25
+
+        reach = max(reach, 20)
+        hx = int(cx + nvx * reach)
+        hy = int(cy + nvy * reach)
+        tx = int(cx - nvx * reach)
+        ty = int(cy - nvy * reach)
+        return (hx, hy), (tx, ty)
 
 
 # ══════════════════════════════════════════════════════════════════
-#  DragTracker — public interface (same as before, no changes in main.py)
+#  DragTracker — public interface
 # ══════════════════════════════════════════════════════════════════
 
 class DragTracker:
     """
-    Drag-to-select two-train MOG2 motion tracker.
-
-    User drags a box to set INITIAL position only.
-    After that MOG2 detects moving blobs every frame and matches them
-    to each train by proximity. Completely robust to turns and speed.
-
-    Interface unchanged from previous versions — main.py needs no edits.
+    Drag-to-select two-train MOG2 tracker with:
+      • Track mask  — ignores motion outside the track boundary
+      • Head / tail — shows leading and trailing edge of each train
+      • Direction   — detects when Train A is behind Train B
     """
 
     def __init__(self):
-        # MOG2 background subtractor
         self._bg = cv2.createBackgroundSubtractorMOG2(
             history       = config.MOG2_HISTORY,
             varThreshold  = config.MOG2_VAR_THRESHOLD,
             detectShadows = False,
         )
-        # Morphological kernel for blob cleaning
-        self._kernel = cv2.getStructuringElement(
-            cv2.MORPH_ELLIPSE, (7, 7))
+        self._kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7, 7))
 
-        # Per-train velocity trackers
+        # Track mask (loaded once; None = no mask = full frame)
+        self._mask = _load_track_mask(config.DISPLAY_W, config.DISPLAY_H)
+        if self._mask is not None:
+            logger.info("Track mask active — motion outside track ignored")
+        else:
+            logger.info("No track mask — draw one in calibrate.py (press M) "
+                        "to ignore people moving around the layout")
+
         self._tkr_a = _VelocityTracker("A")
         self._tkr_b = _VelocityTracker("B")
 
-        # Drag selection state
         self.state       = WAIT_A
         self.drag_start  = None
         self.drag_end    = None
         self.is_dragging = False
-
         self._latest_frame = None
 
-        # Flash confirmation timestamps
         self.flash_a_time = 0.0
         self.flash_b_time = 0.0
+        self._last_blobs  = []
 
-        # Last detected blobs (for display)
-        self._last_blobs = []
+        # Direction flag — updated each frame
+        self._a_is_chasing_b = False
 
     # ── Properties ────────────────────────────────────────────────
 
@@ -237,20 +274,22 @@ class DragTracker:
     def tracking_b(self) -> bool:
         return self._tkr_b.active
 
+    @property
+    def a_is_chasing_b(self) -> bool:
+        """
+        True when Train A (manual, front) is BEHIND Train B (BLE, rear)
+        and heading toward it. Speed controller uses this to speed B up
+        instead of slowing it down.
+        """
+        return self._a_is_chasing_b
+
     # ── Frame supply ──────────────────────────────────────────────
 
     def set_display_frame(self, frame):
-        """
-        Store frame and feed it to MOG2 background model.
-        Called every frame — including during warmup — so the
-        background model is always up to date.
-        """
         self._latest_frame = frame.copy()
-        # Feed to background model with low learning rate
-        # so stopped trains take minutes to be "learned" as background
         self._bg.apply(frame, learningRate=config.MOG2_LEARNING_RATE)
 
-    # ── Mouse events (coordinates already in display space) ───────
+    # ── Mouse events ──────────────────────────────────────────────
 
     def on_mouse_down(self, x: int, y: int):
         self.drag_start  = (x, y)
@@ -275,18 +314,15 @@ class DragTracker:
         if bw < config.MIN_BOX_SIZE or bh < config.MIN_BOX_SIZE:
             return
 
-        # Centre of the drawn box = initial train position
         cx = x1 + bw // 2
         cy = y1 + bh // 2
         self._init_position(cx, cy)
 
     def _init_position(self, cx: int, cy: int):
-        """Set initial position for the pending train."""
         if self.state == WAIT_A:
             self._tkr_a.set_initial_position(cx, cy)
             self.flash_a_time = time.time()
             self.state        = WAIT_B
-
         elif self.state in (WAIT_B, TRACKING):
             self._tkr_b.set_initial_position(cx, cy)
             self.flash_b_time = time.time()
@@ -302,39 +338,25 @@ class DragTracker:
         self._tkr_b.reset()
         self.state = WAIT_B
 
-    # ── Main update — MOG2 detection + matching ────────────────────
+    # ── Main update ───────────────────────────────────────────────
 
     def update(self, display_frame) -> tuple:
-        """
-        Detect all moving blobs in the frame.
-        Match each blob to the nearest active train.
-        Return updated (pos_a, pos_b).
-        """
         self._latest_frame = display_frame.copy()
-
-        # Step 1: detect all moving blobs
         blobs = self._detect_blobs(display_frame)
         self._last_blobs = blobs
-
-        # Step 2: match blobs to trains
         self._match(blobs)
-
-        # Step 3: return positions
+        self._update_direction()
         return self._tkr_a.get_position(), self._tkr_b.get_position()
 
     def _detect_blobs(self, frame) -> list:
-        """
-        Run MOG2 and find all moving foreground blobs.
-        Returns list of dicts with cx, cy, area, bbox, used.
-        """
-        # Apply background subtraction
-        fg = self._bg.apply(frame,
-                            learningRate=config.MOG2_LEARNING_RATE)
+        fg = self._bg.apply(frame, learningRate=config.MOG2_LEARNING_RATE)
 
-        # Remove noise: open (erosion then dilation) removes tiny specks
+        # Apply track mask — ignore motion outside track boundary
+        if self._mask is not None:
+            fg = cv2.bitwise_and(fg, self._mask)
+
         fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN,  self._kernel)
-        # Dilate to join nearby blobs from same train
-        fg = cv2.dilate(fg, self._kernel, iterations=2)
+        fg = cv2.dilate(fg,       self._kernel, iterations=2)
 
         contours, _ = cv2.findContours(
             fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -350,22 +372,12 @@ class DragTracker:
             cx  = int(M["m10"] / M["m00"])
             cy  = int(M["m01"] / M["m00"])
             x, y, bw, bh = cv2.boundingRect(c)
-            blobs.append({
-                "cx": cx, "cy": cy,
-                "area": area, "bbox": (x, y, bw, bh),
-                "used": False,
-            })
-
+            blobs.append({"cx": cx, "cy": cy,
+                          "area": area, "bbox": (x, y, bw, bh),
+                          "used": False})
         return blobs
 
     def _match(self, blobs: list):
-        """
-        Greedy blob-to-train matching.
-        Each blob is assigned to the nearest active train
-        whose predicted position is within MAX_MATCH_DIST.
-        Trains with no matching blob are updated by velocity.
-        """
-        # Build list of active trains with their predictions
         trains = []
         if self._tkr_a.initialized:
             px, py = self._tkr_a.predict_next()
@@ -374,40 +386,93 @@ class DragTracker:
             px, py = self._tkr_b.predict_next()
             trains.append((self._tkr_b, px, py))
 
-        if not trains:
-            return
-
-        # Sort blobs by area descending — prefer larger blobs
-        blobs_sorted = sorted(blobs, key=lambda b: -b["area"])
+        blobs_s = sorted(blobs, key=lambda b: -b["area"])
 
         for (tkr, pred_x, pred_y) in trains:
-            best_dist = float(config.MAX_MATCH_DIST)
-            best_blob = None
-
-            for blob in blobs_sorted:
+            best_d, best_b = float(config.MAX_MATCH_DIST), None
+            for blob in blobs_s:
                 if blob["used"]:
                     continue
                 dx = blob["cx"] - pred_x
                 dy = blob["cy"] - pred_y
                 d  = np.sqrt(dx * dx + dy * dy)
-                if d < best_dist:
-                    best_dist = d
-                    best_blob = blob
-
-            if best_blob:
-                best_blob["used"] = True
-                tkr.update_from_blob(
-                    best_blob["cx"], best_blob["cy"],
-                    best_blob["bbox"])
+                if d < best_d:
+                    best_d = d
+                    best_b = blob
+            if best_b:
+                best_b["used"] = True
+                tkr.update_from_blob(best_b["cx"], best_b["cy"],
+                                     best_b["bbox"])
             else:
-                # No blob nearby — coast on velocity
                 tkr.predict_update()
 
-    # ── Debug display ─────────────────────────────────────────────
+    def _update_direction(self):
+        """
+        Determine if Train A is behind Train B and heading toward it.
+        Uses dot product of Train A's velocity with the vector from A to B.
+        dot > 0 → A heading toward B → A is behind B → speed up B.
+        dot < 0 → A heading away from B → B is behind A → normal slow-B logic.
+        """
+        if not (self._tkr_a.initialized and self._tkr_b.initialized):
+            self._a_is_chasing_b = False
+            return
+
+        ax, ay = self._tkr_a._px or 0, self._tkr_a._py or 0
+        bx, by = self._tkr_b._px or 0, self._tkr_b._py or 0
+        avx, avy = self._tkr_a.velocity
+
+        a_speed = np.sqrt(avx ** 2 + avy ** 2)
+        if a_speed < 0.3:
+            # Train A not really moving — no chase
+            self._a_is_chasing_b = False
+            return
+
+        # Vector from A to B
+        dx = bx - ax
+        dy = by - ay
+        dot = avx * dx + avy * dy
+
+        # If dot > 0: A's velocity points toward B → A chasing B
+        self._a_is_chasing_b = (dot > 0)
+
+    # ── Gap using facing edges ─────────────────────────────────────
+
+    def facing_gap(self, pos_a: TrainPosition,
+                   pos_b: TrainPosition) -> "float | None":
+        """
+        Gap between the FACING edges of the two trains.
+        Uses head/tail points when available — much more accurate
+        than centre-to-centre distance.
+        If either train's head/tail is not yet known (still building
+        velocity), falls back to centre-to-centre.
+        """
+        if pos_a is None or pos_b is None:
+            return None
+
+        if self._a_is_chasing_b:
+            # A is behind B → gap = B tail to A head
+            a_edge = pos_a.head
+            b_edge = pos_b.tail
+        else:
+            # B is behind A → gap = A tail to B head
+            a_edge = pos_a.tail
+            b_edge = pos_b.head
+
+        # Fall back to centres if head/tail not yet determined
+        if a_edge is None or b_edge is None:
+            return pixel_distance(pos_a, pos_b)
+
+        dx = a_edge[0] - b_edge[0]
+        dy = a_edge[1] - b_edge[1]
+        return float(np.sqrt(dx * dx + dy * dy))
+
+    # ── Debug helpers ─────────────────────────────────────────────
 
     def get_blobs(self) -> list:
-        """Return last detected blobs for debug display."""
         return self._last_blobs
+
+    def get_mask(self):
+        return self._mask
 
     # ── Safety ────────────────────────────────────────────────────
 
@@ -417,7 +482,7 @@ class DragTracker:
     def is_b_missing(self) -> bool:
         return not self._tkr_b.initialized or self._tkr_b.is_missing()
 
-    # ── Status text ───────────────────────────────────────────────
+    # ── Status ────────────────────────────────────────────────────
 
     def instruction_text(self) -> str:
         if self.state == WAIT_A:
@@ -425,14 +490,16 @@ class DragTracker:
         elif self.state == WAIT_B:
             return "STEP 2 — HOLD and DRAG a box around  TRAIN B  (rear BLE train)"
         else:
-            a = "tracking" if self._tkr_a.active else "LOST — press A to re-select"
-            b = "tracking" if self._tkr_b.active else "LOST — press B to re-select"
-            return f"A: {a}     B: {b}"
+            a = "tracking" if self._tkr_a.active else "LOST — press A"
+            b = "tracking" if self._tkr_b.active else "LOST — press B"
+            chase = "  ⚠ A CHASING B" if self._a_is_chasing_b else ""
+            return f"A: {a}   B: {b}{chase}"
 
 
-# ── Distance helper ───────────────────────────────────────────────
+# ── Distance helpers ──────────────────────────────────────────────
 
 def pixel_distance(a, b) -> "float | None":
+    """Centre-to-centre pixel distance between two TrainPositions."""
     if a is None or b is None:
         return None
-    return float(np.sqrt((a.x - b.x)**2 + (a.y - b.y)**2))
+    return float(np.sqrt((a.x - b.x) ** 2 + (a.y - b.y) ** 2))
