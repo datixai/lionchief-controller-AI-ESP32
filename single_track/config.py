@@ -70,6 +70,27 @@ CAMERA_WARMUP_FRAMES = 40
 MIN_BOX_SIZE           = 15   # minimum drag size (pixels) to accept
 POSITION_SMOOTH_FRAMES = 3    # rolling average for smooth position
 
+# ── OPTICAL FLOW SETTINGS ─────────────────────────────────────────
+# Lucas-Kanade optical flow tracks texture POINTS on each train.
+# Works on turns because it tracks WHERE points moved, not how
+# the train LOOKS — rotation does not confuse it.
+
+OF_MAX_CORNERS    = 50    # feature points sampled per train
+                           # more = more robust but slower
+OF_QUALITY_LEVEL  = 0.2   # corner quality threshold (0-1)
+                           # lower = more points found on flat surfaces
+OF_MIN_DISTANCE   = 5     # minimum pixels between feature points
+OF_WIN_SIZE       = 21    # LK search window size (pixels)
+                           # larger = better for fast-moving trains
+OF_PYRAMID_LEVELS = 4     # image pyramid levels
+                           # more = handles larger frame-to-frame motion
+OF_MIN_POINTS     = 4     # minimum surviving points before re-sample
+                           # below this = try to find new points nearby
+OF_SEARCH_RADIUS  = 90    # pixel radius to search when points lost
+                           # increase if train moves fast between frames
+OF_RESAMPLE_EVERY = 45    # re-sample feature points every N frames
+                           # keeps points fresh and prevents drift
+
 # ── DISTANCE ZONES (pixels, in DISPLAY resolution) ────────────────
 # These are in 960×540 display pixels — same as what you see on screen.
 # Run calibrate.py to set them interactively.
