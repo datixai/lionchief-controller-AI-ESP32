@@ -68,28 +68,33 @@ CAMERA_WARMUP_FRAMES = 40
 
 # ── TRACKER ───────────────────────────────────────────────────────
 MIN_BOX_SIZE           = 15   # minimum drag size (pixels) to accept
-POSITION_SMOOTH_FRAMES = 3    # rolling average for smooth position
+POSITION_SMOOTH_FRAMES = 5    # rolling average for smooth position
 
-# ── OPTICAL FLOW SETTINGS ─────────────────────────────────────────
-# Lucas-Kanade optical flow tracks texture POINTS on each train.
-# Works on turns because it tracks WHERE points moved, not how
-# the train LOOKS — rotation does not confuse it.
+# ── MOG2 MOTION DETECTION ─────────────────────────────────────────
+# Trains are the ONLY moving objects on the layout.
+# MOG2 background subtraction detects every moving blob every frame.
+# A blob near the last known train position = that train.
+# Works through turns and any speed — tracks MOTION not APPEARANCE.
 
-OF_MAX_CORNERS    = 50    # feature points sampled per train
-                           # more = more robust but slower
-OF_QUALITY_LEVEL  = 0.2   # corner quality threshold (0-1)
-                           # lower = more points found on flat surfaces
-OF_MIN_DISTANCE   = 5     # minimum pixels between feature points
-OF_WIN_SIZE       = 21    # LK search window size (pixels)
-                           # larger = better for fast-moving trains
-OF_PYRAMID_LEVELS = 4     # image pyramid levels
-                           # more = handles larger frame-to-frame motion
-OF_MIN_POINTS     = 4     # minimum surviving points before re-sample
-                           # below this = try to find new points nearby
-OF_SEARCH_RADIUS  = 90    # pixel radius to search when points lost
-                           # increase if train moves fast between frames
-OF_RESAMPLE_EVERY = 45    # re-sample feature points every N frames
-                           # keeps points fresh and prevents drift
+MOG2_HISTORY       = 300   # frames to build background model
+                            # higher = more stable background
+MOG2_VAR_THRESHOLD = 40    # detection sensitivity
+                            # lower = more sensitive (catches slower trains)
+                            # higher = ignores small lighting changes
+MOG2_LEARNING_RATE = 0.005 # how fast background model updates
+                            # keep LOW so stopped trains don't vanish
+                            # from model for ~5-10 minutes of stillness
+
+MIN_BLOB_AREA      = 150   # minimum pixel area to count as a train
+                            # ★ TUNE: increase if getting false detections
+                            # ★ TUNE: decrease if real trains not detected
+
+MAX_MATCH_DIST     = 180   # maximum pixels between predicted position
+                            # and detected blob to count as same train
+                            # ★ TUNE: increase if fast train loses tracking
+
+VELOCITY_ALPHA     = 0.4   # velocity smoothing (0=no update, 1=instant)
+                            # lower = smoother but slower to react to turns
 
 # ── DISTANCE ZONES (pixels, in DISPLAY resolution) ────────────────
 # These are in 960×540 display pixels — same as what you see on screen.

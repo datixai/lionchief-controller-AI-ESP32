@@ -113,15 +113,11 @@ def draw_overlay(display, tracker, pos_a, pos_b,
         cv2.putText(display, lbl, (x1+4, max(y1-6, 14)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, dcol, 2)
 
-    # ── Optical flow feature points (small dots showing tracked points) ──
-    pts_a = tracker.get_points_a()
-    pts_b = tracker.get_points_b()
-    if pts_a is not None:
-        for p in pts_a.reshape(-1, 2):
-            cv2.circle(display, (int(p[0]), int(p[1])), 2, (0, 165, 255), -1)
-    if pts_b is not None:
-        for p in pts_b.reshape(-1, 2):
-            cv2.circle(display, (int(p[0]), int(p[1])), 2, (0, 220, 50), -1)
+    # ── MOG2 detected blobs (gray circles = detected motion) ─────────
+    for blob in tracker.get_blobs():
+        cv2.circle(display,
+                   (blob["cx"], blob["cy"]),
+                   6, (160, 160, 160), 1)
 
     # ── Distance line ─────────────────────────────────────────────
     if pos_a and pos_b and dist:

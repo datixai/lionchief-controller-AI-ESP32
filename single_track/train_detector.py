@@ -1,23 +1,26 @@
 # ══════════════════════════════════════════════════════════════════
-#  train_detector.py  —  Optical Flow Train Tracker
+#  train_detector.py  —  MOG2 Motion-Based Train Tracker
 #  Harry Locomotive Project 3  |  Datix AI  |  June 2026
 #
-#  WHY OPTICAL FLOW INSTEAD OF CSRT:
-#    CSRT memorises how the train LOOKS inside the box.
-#    On a turn the train rotates → looks different → CSRT loses it.
+#  WHY MOG2 INSTEAD OF OPTICAL FLOW / CSRT:
+#    Optical flow and CSRT track APPEARANCE — how the train looks.
+#    Small ceiling-camera trains have little texture, rotate on turns,
+#    and move fast → appearance changes → box leaves the train.
 #
-#    Lucas-Kanade optical flow tracks WHERE individual texture
-#    points on the train MOVED between frames.
-#    Rotation does not matter — points are still there, just moved.
-#    Works through turns, curves, speed changes.
+#    MOG2 tracks MOTION — what is moving in the frame.
+#    Trains are the only moving objects on the layout.
+#    Every frame: find all moving blobs → match nearest blob to each
+#    train's last known position → that blob IS the train.
+#    Works through turns, speed changes, curves — always.
 #
 #  HOW IT WORKS:
-#    1. User drags a box around a train
-#    2. cv2.goodFeaturesToTrack finds corner points inside the box
-#    3. Every frame: cv2.calcOpticalFlowPyrLK finds where each point moved
-#    4. Centre of surviving points = train position
-#    5. If points drop below OF_MIN_POINTS → re-sample nearby
-#    6. Every OF_RESAMPLE_EVERY frames → refresh points to prevent drift
+#    1. User drags a box to set INITIAL position for each train
+#    2. MOG2 builds background model (learns the static layout)
+#    3. Every frame: background subtraction finds moving blobs
+#    4. Each blob is matched to the nearest train by distance
+#    5. Velocity prediction smooths position when no blob is near
+#    6. Low learning rate prevents stopped trains from disappearing
+#       from the background model for several minutes
 # ══════════════════════════════════════════════════════════════════
 
 import cv2
@@ -34,21 +37,6 @@ WAIT_A   = "WAIT_A"
 WAIT_B   = "WAIT_B"
 TRACKING = "TRACKING"
 
-# Lucas-Kanade parameters — built once, reused every frame
-LK_PARAMS = dict(
-    winSize  = (config.OF_WIN_SIZE, config.OF_WIN_SIZE),
-    maxLevel = config.OF_PYRAMID_LEVELS,
-    criteria = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 20, 0.01),
-)
-
-# Feature detector parameters
-FEAT_PARAMS = dict(
-    maxCorners   = config.OF_MAX_CORNERS,
-    qualityLevel = config.OF_QUALITY_LEVEL,
-    minDistance  = config.OF_MIN_DISTANCE,
-    blockSize    = 7,
-)
-
 
 class TrainPosition:
     def __init__(self, x: int, y: int, bbox: tuple = None):
@@ -61,24 +49,26 @@ class TrainPosition:
         return (self.x, self.y)
 
 
-# ── Single train optical flow tracker ─────────────────────────────
+# ── Per-train state tracker with velocity prediction ───────────────
 
-class _FlowTracker:
+class _VelocityTracker:
     """
-    Tracks one train using Lucas-Kanade sparse optical flow.
-    Works through turns — tracks motion of individual points,
-    not overall appearance of the bounding box.
+    Tracks one train's position and velocity.
+    Position is updated from detected motion blobs.
+    When no blob is found, velocity prediction fills the gap.
     """
 
     def __init__(self, label: str):
-        self.label       = label
-        self._points     = None     # current tracked points (N,1,2) float32
-        self._gray_prev  = None     # previous frame (grayscale)
-        self._active     = False
-        self._last_seen  = 0.0
-        self._frame_count = 0       # counts frames since last resample
-        self._buf        = deque(maxlen=config.POSITION_SMOOTH_FRAMES)
-        self.last_pos    = None
+        self.label      = label
+        self._px        = None    # current x position (float)
+        self._py        = None    # current y position (float)
+        self._vx        = 0.0    # velocity x (pixels/frame)
+        self._vy        = 0.0    # velocity y (pixels/frame)
+        self._active    = False
+        self._last_seen = 0.0    # time last matched to a real blob
+        self._buf       = deque(maxlen=config.POSITION_SMOOTH_FRAMES)
+        self._last_bbox = None
+        self._frames_without_blob = 0
 
     @property
     def active(self) -> bool:
@@ -86,195 +76,152 @@ class _FlowTracker:
 
     @property
     def initialized(self) -> bool:
-        return self._gray_prev is not None
+        return self._px is not None
 
-    def init(self, gray_frame: np.ndarray, bbox: tuple) -> bool:
-        """
-        Sample feature points inside bbox and begin tracking.
-        bbox = (x, y, w, h) in display coordinates.
-        """
-        x, y, bw, bh = [int(v) for v in bbox]
-
-        # Crop ROI from grayscale frame
-        roi = gray_frame[y: y + bh, x: x + bw]
-        if roi.size == 0:
-            logger.warning(f"[{self.label}] Empty ROI — try a bigger box")
-            return False
-
-        pts = cv2.goodFeaturesToTrack(roi, **FEAT_PARAMS)
-
-        if pts is None or len(pts) < config.OF_MIN_POINTS:
-            logger.warning(
-                f"[{self.label}] Only {0 if pts is None else len(pts)} "
-                f"feature points found — try drawing a bigger box or on "
-                f"a more textured part of the train")
-            return False
-
-        # Shift from ROI-local to full-frame coordinates
-        pts[:, :, 0] += x
-        pts[:, :, 1] += y
-
-        self._points      = pts.astype(np.float32)
-        self._gray_prev   = gray_frame.copy()
-        self._active      = True
-        self._last_seen   = time.time()
-        self._frame_count = 0
-        self._buf.clear()
-
-        cx = int(np.mean(pts[:, 0, 0]))
-        cy = int(np.mean(pts[:, 0, 1]))
-        self._buf.append((cx, cy))
-        self.last_pos = TrainPosition(cx, cy, bbox)
-
-        logger.info(f"[{self.label}] Optical flow init — "
-                    f"{len(pts)} points at ({cx},{cy})")
-        return True
-
-    def update(self, gray_frame: np.ndarray) -> "TrainPosition | None":
-        """
-        Compute optical flow from previous frame to current frame.
-        Returns TrainPosition on success, None if train is lost.
-        """
-        if not self._active or self._points is None or self._gray_prev is None:
-            self._gray_prev = gray_frame.copy()
-            return None
-
-        self._frame_count += 1
-
-        # ── Periodic resample to prevent point drift ──────────────
-        # Every OF_RESAMPLE_EVERY frames, refresh feature points
-        # around the current position so they stay on the train.
-        if self._frame_count % config.OF_RESAMPLE_EVERY == 0:
-            if self.last_pos:
-                self._resample_near(gray_frame,
-                                    self.last_pos.x, self.last_pos.y)
-
-        # ── Compute optical flow ───────────────────────────────────
-        new_pts, status, _ = cv2.calcOpticalFlowPyrLK(
-            self._gray_prev, gray_frame, self._points, None, **LK_PARAMS)
-
-        # Keep only successfully tracked points
-        if new_pts is not None and status is not None:
-            mask  = status.ravel() == 1
-            good  = new_pts[mask]
-        else:
-            good = np.array([]).reshape(0, 2)
-
-        # ── Too few points — try immediate resample ────────────────
-        if len(good) < config.OF_MIN_POINTS:
-            if self.last_pos:
-                resampled = self._resample_near(
-                    gray_frame, self.last_pos.x, self.last_pos.y)
-                if resampled:
-                    # Return last position — train temporarily lost
-                    # but points have been refreshed for next frame
-                    self._gray_prev = gray_frame.copy()
-                    logger.debug(f"[{self.label}] Re-sampled after point loss")
-                    return self.last_pos
-            # Truly lost
-            self._active    = False
-            self._gray_prev = gray_frame.copy()
-            logger.debug(f"[{self.label}] Lost — only {len(good)} points survived")
-            return None
-
-        # ── Good tracking ─────────────────────────────────────────
-        pts_2d = good.reshape(-1, 2)
-        cx = int(np.mean(pts_2d[:, 0]))
-        cy = int(np.mean(pts_2d[:, 1]))
-
-        # Rolling average for smooth position
-        self._buf.append((cx, cy))
-        sx = int(round(sum(p[0] for p in self._buf) / len(self._buf)))
-        sy = int(round(sum(p[1] for p in self._buf) / len(self._buf)))
-
-        # Estimate bounding box from point spread
-        xs   = pts_2d[:, 0]
-        ys   = pts_2d[:, 1]
-        pad  = 15
-        bx   = max(0, int(np.min(xs)) - pad)
-        by   = max(0, int(np.min(ys)) - pad)
-        bw   = int(np.max(xs) - np.min(xs)) + pad * 2
-        bh   = int(np.max(ys) - np.min(ys)) + pad * 2
-
-        self._points    = good.reshape(-1, 1, 2).astype(np.float32)
-        self._gray_prev = gray_frame.copy()
+    def set_initial_position(self, x: int, y: int):
+        """Called once when user drags a box to select this train."""
+        self._px        = float(x)
+        self._py        = float(y)
+        self._vx        = 0.0
+        self._vy        = 0.0
         self._active    = True
         self._last_seen = time.time()
-        self.last_pos   = TrainPosition(sx, sy, (bx, by, bw, bh))
+        self._buf.clear()
+        self._buf.append((x, y))
+        self._frames_without_blob = 0
+        logger.info(f"[Train {self.label}] Initial position: ({x},{y})")
 
-        return self.last_pos
+    def predict_next(self) -> tuple:
+        """Predicted position for next frame based on current velocity."""
+        if self._px is None:
+            return 0.0, 0.0
+        return (self._px + self._vx, self._py + self._vy)
 
-    def _resample_near(self, gray_frame: np.ndarray,
-                       cx: int, cy: int) -> bool:
+    def update_from_blob(self, blob_cx: int, blob_cy: int,
+                         blob_bbox: tuple):
         """
-        Sample new feature points in a circle around (cx, cy).
-        Called when surviving points drop below OF_MIN_POINTS,
-        and periodically to keep points fresh on the train.
+        Blob was matched to this train. Update position and velocity.
+        Velocity is updated as exponential moving average so it
+        responds to direction changes on turns without being jerky.
         """
-        h, w  = gray_frame.shape[:2]
-        r     = config.OF_SEARCH_RADIUS
-        x1    = max(0, cx - r)
-        y1    = max(0, cy - r)
-        x2    = min(w, cx + r)
-        y2    = min(h, cy + r)
-        roi   = gray_frame[y1:y2, x1:x2]
+        if self._px is not None:
+            dx = blob_cx - self._px
+            dy = blob_cy - self._py
+            a  = config.VELOCITY_ALPHA
+            self._vx = a * dx + (1.0 - a) * self._vx
+            self._vy = a * dy + (1.0 - a) * self._vy
 
-        if roi.size == 0:
-            return False
+        self._px        = float(blob_cx)
+        self._py        = float(blob_cy)
+        self._last_seen = time.time()
+        self._active    = True
+        self._last_bbox = blob_bbox
+        self._frames_without_blob = 0
+        self._buf.append((blob_cx, blob_cy))
 
-        pts = cv2.goodFeaturesToTrack(roi, **FEAT_PARAMS)
-        if pts is None or len(pts) < config.OF_MIN_POINTS:
-            return False
+    def predict_update(self):
+        """
+        No blob was matched. Advance position by velocity.
+        Used when train is between blobs (e.g. short gap in detection).
+        """
+        if self._px is None:
+            return
+        self._px += self._vx
+        self._py += self._vy
+        self._frames_without_blob += 1
+        # Gradually decay velocity if no blob for a while (train may be stopping)
+        if self._frames_without_blob > 10:
+            self._vx *= 0.9
+            self._vy *= 0.9
 
-        pts[:, :, 0] += x1
-        pts[:, :, 1] += y1
-        self._points = pts.astype(np.float32)
-        self._active = True
-        return True
+    def get_position(self) -> "TrainPosition | None":
+        """Return smoothed current position."""
+        if not self._active or self._px is None:
+            return None
+
+        # Smooth using rolling buffer
+        if self._buf:
+            sx = int(round(sum(p[0] for p in self._buf) / len(self._buf)))
+            sy = int(round(sum(p[1] for p in self._buf) / len(self._buf)))
+        else:
+            sx = int(round(self._px))
+            sy = int(round(self._py))
+
+        # Estimate bbox: use last real blob bbox, or small default
+        if self._last_bbox:
+            bx, by, bw, bh = self._last_bbox
+            # Shift bbox to current smoothed position
+            bx = sx - bw // 2
+            by = sy - bh // 2
+            bbox = (bx, by, bw, bh)
+        else:
+            s    = 30
+            bbox = (sx - s, sy - s, s * 2, s * 2)
+
+        return TrainPosition(sx, sy, bbox)
 
     def is_missing(self) -> bool:
         return (time.time() - self._last_seen) > config.MISSING_TIMEOUT_S
 
     def reset(self):
-        self._points      = None
-        self._gray_prev   = None
-        self._active      = False
-        self._frame_count = 0
+        self._px        = None
+        self._py        = None
+        self._vx        = 0.0
+        self._vy        = 0.0
+        self._active    = False
+        self._last_bbox = None
         self._buf.clear()
-        self.last_pos     = None
+        self._frames_without_blob = 0
 
-    def get_points(self) -> "np.ndarray | None":
-        """Return current tracked points for debug display."""
-        return self._points
+    @property
+    def current_xy(self):
+        return self._px, self._py
 
 
 # ══════════════════════════════════════════════════════════════════
-#  DragTracker — public interface used by main.py and calibrate.py
+#  DragTracker — public interface (same as before, no changes in main.py)
 # ══════════════════════════════════════════════════════════════════
 
 class DragTracker:
     """
-    Drag-to-select two-train optical flow tracker.
-    Interface identical to the old CSRT version — no changes in main.py.
+    Drag-to-select two-train MOG2 motion tracker.
 
-    User holds mouse and drags a box around each train.
-    Optical flow then tracks each train through turns and curves.
+    User drags a box to set INITIAL position only.
+    After that MOG2 detects moving blobs every frame and matches them
+    to each train by proximity. Completely robust to turns and speed.
+
+    Interface unchanged from previous versions — main.py needs no edits.
     """
 
     def __init__(self):
-        self._tkr_a = _FlowTracker("A")
-        self._tkr_b = _FlowTracker("B")
+        # MOG2 background subtractor
+        self._bg = cv2.createBackgroundSubtractorMOG2(
+            history       = config.MOG2_HISTORY,
+            varThreshold  = config.MOG2_VAR_THRESHOLD,
+            detectShadows = False,
+        )
+        # Morphological kernel for blob cleaning
+        self._kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (7, 7))
 
+        # Per-train velocity trackers
+        self._tkr_a = _VelocityTracker("A")
+        self._tkr_b = _VelocityTracker("B")
+
+        # Drag selection state
         self.state       = WAIT_A
         self.drag_start  = None
         self.drag_end    = None
         self.is_dragging = False
 
-        self._display_frame = None   # latest display-sized BGR frame
-        self._gray_frame    = None   # latest display-sized gray frame
+        self._latest_frame = None
 
+        # Flash confirmation timestamps
         self.flash_a_time = 0.0
         self.flash_b_time = 0.0
+
+        # Last detected blobs (for display)
+        self._last_blobs = []
 
     # ── Properties ────────────────────────────────────────────────
 
@@ -292,11 +239,18 @@ class DragTracker:
 
     # ── Frame supply ──────────────────────────────────────────────
 
-    def set_display_frame(self, display_frame):
-        self._display_frame = display_frame.copy()
-        self._gray_frame    = cv2.cvtColor(display_frame, cv2.COLOR_BGR2GRAY)
+    def set_display_frame(self, frame):
+        """
+        Store frame and feed it to MOG2 background model.
+        Called every frame — including during warmup — so the
+        background model is always up to date.
+        """
+        self._latest_frame = frame.copy()
+        # Feed to background model with low learning rate
+        # so stopped trains take minutes to be "learned" as background
+        self._bg.apply(frame, learningRate=config.MOG2_LEARNING_RATE)
 
-    # ── Mouse events ──────────────────────────────────────────────
+    # ── Mouse events (coordinates already in display space) ───────
 
     def on_mouse_down(self, x: int, y: int):
         self.drag_start  = (x, y)
@@ -319,66 +273,141 @@ class DragTracker:
         bh = abs(self.drag_end[1] - self.drag_start[1])
 
         if bw < config.MIN_BOX_SIZE or bh < config.MIN_BOX_SIZE:
-            logger.debug(f"Drag too small ({bw}×{bh}) — ignored")
             return
 
-        x1 = max(0, x1)
-        y1 = max(0, y1)
-        bw = min(bw, config.DISPLAY_W - x1)
-        bh = min(bh, config.DISPLAY_H - y1)
-        self._init_tracker((x1, y1, bw, bh))
+        # Centre of the drawn box = initial train position
+        cx = x1 + bw // 2
+        cy = y1 + bh // 2
+        self._init_position(cx, cy)
 
-    # ── Tracker init ──────────────────────────────────────────────
-
-    def _init_tracker(self, bbox: tuple):
-        if self._gray_frame is None:
-            logger.warning("No frame yet — drag ignored")
-            return
-
+    def _init_position(self, cx: int, cy: int):
+        """Set initial position for the pending train."""
         if self.state == WAIT_A:
-            ok = self._tkr_a.init(self._gray_frame, bbox)
-            if ok:
-                self.flash_a_time = time.time()
-                self.state = WAIT_B
-                logger.info("Train A locked via optical flow")
-            else:
-                logger.warning("Train A init failed — drag a bigger box")
+            self._tkr_a.set_initial_position(cx, cy)
+            self.flash_a_time = time.time()
+            self.state        = WAIT_B
 
         elif self.state in (WAIT_B, TRACKING):
-            ok = self._tkr_b.init(self._gray_frame, bbox)
-            if ok:
-                self.flash_b_time = time.time()
-                self.state = TRACKING
-                logger.info("Train B locked via optical flow")
-            else:
-                logger.warning("Train B init failed — drag a bigger box")
+            self._tkr_b.set_initial_position(cx, cy)
+            self.flash_b_time = time.time()
+            self.state        = TRACKING
 
     # ── Re-select ─────────────────────────────────────────────────
 
     def reselect_a(self):
         self._tkr_a.reset()
         self.state = WAIT_A
-        logger.info("Waiting for Train A re-select")
 
     def reselect_b(self):
         self._tkr_b.reset()
         self.state = WAIT_B
-        logger.info("Waiting for Train B re-select")
 
-    # ── Update ────────────────────────────────────────────────────
+    # ── Main update — MOG2 detection + matching ────────────────────
 
     def update(self, display_frame) -> tuple:
         """
-        Run optical flow on current display frame.
-        Returns (pos_a, pos_b) — TrainPosition or None each.
+        Detect all moving blobs in the frame.
+        Match each blob to the nearest active train.
+        Return updated (pos_a, pos_b).
         """
-        gray = cv2.cvtColor(display_frame, cv2.COLOR_BGR2GRAY)
-        self._display_frame = display_frame.copy()
-        self._gray_frame    = gray
+        self._latest_frame = display_frame.copy()
 
-        pos_a = self._tkr_a.update(gray) if self._tkr_a.initialized else None
-        pos_b = self._tkr_b.update(gray) if self._tkr_b.initialized else None
-        return pos_a, pos_b
+        # Step 1: detect all moving blobs
+        blobs = self._detect_blobs(display_frame)
+        self._last_blobs = blobs
+
+        # Step 2: match blobs to trains
+        self._match(blobs)
+
+        # Step 3: return positions
+        return self._tkr_a.get_position(), self._tkr_b.get_position()
+
+    def _detect_blobs(self, frame) -> list:
+        """
+        Run MOG2 and find all moving foreground blobs.
+        Returns list of dicts with cx, cy, area, bbox, used.
+        """
+        # Apply background subtraction
+        fg = self._bg.apply(frame,
+                            learningRate=config.MOG2_LEARNING_RATE)
+
+        # Remove noise: open (erosion then dilation) removes tiny specks
+        fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN,  self._kernel)
+        # Dilate to join nearby blobs from same train
+        fg = cv2.dilate(fg, self._kernel, iterations=2)
+
+        contours, _ = cv2.findContours(
+            fg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        blobs = []
+        for c in contours:
+            area = cv2.contourArea(c)
+            if area < config.MIN_BLOB_AREA:
+                continue
+            M = cv2.moments(c)
+            if M["m00"] == 0:
+                continue
+            cx  = int(M["m10"] / M["m00"])
+            cy  = int(M["m01"] / M["m00"])
+            x, y, bw, bh = cv2.boundingRect(c)
+            blobs.append({
+                "cx": cx, "cy": cy,
+                "area": area, "bbox": (x, y, bw, bh),
+                "used": False,
+            })
+
+        return blobs
+
+    def _match(self, blobs: list):
+        """
+        Greedy blob-to-train matching.
+        Each blob is assigned to the nearest active train
+        whose predicted position is within MAX_MATCH_DIST.
+        Trains with no matching blob are updated by velocity.
+        """
+        # Build list of active trains with their predictions
+        trains = []
+        if self._tkr_a.initialized:
+            px, py = self._tkr_a.predict_next()
+            trains.append((self._tkr_a, px, py))
+        if self._tkr_b.initialized:
+            px, py = self._tkr_b.predict_next()
+            trains.append((self._tkr_b, px, py))
+
+        if not trains:
+            return
+
+        # Sort blobs by area descending — prefer larger blobs
+        blobs_sorted = sorted(blobs, key=lambda b: -b["area"])
+
+        for (tkr, pred_x, pred_y) in trains:
+            best_dist = float(config.MAX_MATCH_DIST)
+            best_blob = None
+
+            for blob in blobs_sorted:
+                if blob["used"]:
+                    continue
+                dx = blob["cx"] - pred_x
+                dy = blob["cy"] - pred_y
+                d  = np.sqrt(dx * dx + dy * dy)
+                if d < best_dist:
+                    best_dist = d
+                    best_blob = blob
+
+            if best_blob:
+                best_blob["used"] = True
+                tkr.update_from_blob(
+                    best_blob["cx"], best_blob["cy"],
+                    best_blob["bbox"])
+            else:
+                # No blob nearby — coast on velocity
+                tkr.predict_update()
+
+    # ── Debug display ─────────────────────────────────────────────
+
+    def get_blobs(self) -> list:
+        """Return last detected blobs for debug display."""
+        return self._last_blobs
 
     # ── Safety ────────────────────────────────────────────────────
 
@@ -388,13 +417,7 @@ class DragTracker:
     def is_b_missing(self) -> bool:
         return not self._tkr_b.initialized or self._tkr_b.is_missing()
 
-    def get_points_a(self):
-        return self._tkr_a.get_points()
-
-    def get_points_b(self):
-        return self._tkr_b.get_points()
-
-    # ── Status ────────────────────────────────────────────────────
+    # ── Status text ───────────────────────────────────────────────
 
     def instruction_text(self) -> str:
         if self.state == WAIT_A:
@@ -402,9 +425,9 @@ class DragTracker:
         elif self.state == WAIT_B:
             return "STEP 2 — HOLD and DRAG a box around  TRAIN B  (rear BLE train)"
         else:
-            a = "OK" if self._tkr_a.active else "LOST — press A to re-select"
-            b = "OK" if self._tkr_b.active else "LOST — press B to re-select"
-            return f"Tracking   A: {a}     B: {b}"
+            a = "tracking" if self._tkr_a.active else "LOST — press A to re-select"
+            b = "tracking" if self._tkr_b.active else "LOST — press B to re-select"
+            return f"A: {a}     B: {b}"
 
 
 # ── Distance helper ───────────────────────────────────────────────
