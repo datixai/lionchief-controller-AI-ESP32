@@ -1,9 +1,17 @@
 # ══════════════════════════════════════════════════════════════════
-#  config.py  —  Single Track Safe Distance
+#  config.py  —  Single Track Safe Distance v6.0
 #  Harry Locomotive Project 3  |  Datix AI  |  June 2026
 #
-#  Train A = front (manual, no BLE)   — ORANGE
-#  Train B = rear  (BLE controlled)   — GREEN
+#  4-BOX SYSTEM:
+#    User manually drags 4 boxes:
+#      Train A HEAD (leading edge of front train)
+#      Train A TAIL (trailing edge of front train)
+#      Train B HEAD (leading edge of rear BLE train)
+#      Train B TAIL (trailing edge of rear BLE train)
+#
+#    Each box has its own LOCAL SEARCH RADIUS.
+#    MOG2 only looks for motion near each box.
+#    People walking far away are completely ignored.
 # ══════════════════════════════════════════════════════════════════
 
 # ── TRAIN B BLE ───────────────────────────────────────────────────
@@ -44,49 +52,57 @@ CAMERA_WIDTH  = 1280
 CAMERA_HEIGHT = 720
 CAMERA_FPS    = 30
 
-# ── DISPLAY — fixed size so mouse coords == pixel coords ──────────
 DISPLAY_W = 960
 DISPLAY_H = 540
 CAMERA_WARMUP_FRAMES = 40
 
 # ── FILES ─────────────────────────────────────────────────────────
 CALIBRATION_FILE = "calibration.json"
-TRACK_MASK_FILE  = "track_mask.json"   # optional — drawn in calibrate.py
 
 # ── TRACKER ───────────────────────────────────────────────────────
-MIN_BOX_SIZE           = 15
-POSITION_SMOOTH_FRAMES = 5
+MIN_BOX_SIZE = 15     # minimum drag size in pixels to accept a box
 
-# ── MOG2 MOTION DETECTION ─────────────────────────────────────────
+# LOCAL SEARCH RADIUS — each box only looks for motion within this
+# many pixels of its last known position.
+# ★ KEY: keeps people walking outside this radius from affecting tracking
+# ★ TUNE UP if train moves fast and tracker loses it
+# ★ TUNE DOWN if nearby people still interfere
+SEARCH_RADIUS = 80    # pixels in display coordinates (960×540)
+
+MIN_BLOB_AREA = 80    # minimum blob area inside local search to count
+
+# Velocity smoothing for each box
+VELOCITY_ALPHA = 0.4
+
+# Rolling average frames for smooth position display
+POSITION_SMOOTH_FRAMES = 4
+
+# ── MOG2 ──────────────────────────────────────────────────────────
 MOG2_HISTORY       = 300
-MOG2_VAR_THRESHOLD = 40   # ★ TUNE UP if people cause false detections
-                           # ★ TUNE DOWN if trains not detected
+MOG2_VAR_THRESHOLD = 45   # ★ TUNE UP if false detections remain
 MOG2_LEARNING_RATE = 0.005
-MIN_BLOB_AREA      = 150  # ★ TUNE UP to ignore small noise blobs
-MAX_MATCH_DIST     = 180  # ★ TUNE UP if fast train loses tracking
-VELOCITY_ALPHA     = 0.4
 
 # ── DISTANCE ZONES (pixels in 960×540 display) ────────────────────
-# Increased from previous values to give Train B more stopping room.
-DISTANCE_DANGER   = 100   # STOP — emergency
-DISTANCE_WARNING  = 160   # slow to FOLLOW_MIN_SPEED
-DISTANCE_CAUTION  = 220   # slow to CAUTION_SPEED
-DISTANCE_SAFE     = 300   # follow at user speed
-DISTANCE_FAR      = 420   # gap too large — catch up
-HYSTERESIS_OFFSET = 20
+# Distance is measured HEAD-to-TAIL between facing edges.
+DISTANCE_DANGER  = 80    # STOP immediately
+DISTANCE_WARNING = 130   # slow to min speed
+DISTANCE_CAUTION = 190   # reduce speed
+DISTANCE_SAFE    = 270   # follow at user speed
+DISTANCE_FAR     = 380   # gap too large — catch up
+HYSTERESIS_OFFSET = 18
+
+CALIBRATION_FILE = "calibration.json"
 
 # ── SPEED ─────────────────────────────────────────────────────────
 DEFAULT_SPEED      = 5
 MAX_CATCH_SPEED    = 7
 FOLLOW_MIN_SPEED   = 2
 CAUTION_SPEED      = 3
-# When Train A is BEHIND Train B (A chasing B on the loop):
-# Train B speeds up to escape and maintain safe distance ahead
-ESCAPE_MIN_SPEED   = 4    # minimum escape speed
-ESCAPE_MAX_SPEED   = 7    # maximum escape speed
+ESCAPE_MIN_SPEED   = 5   # speed when Train A is behind Train B
+ESCAPE_MAX_SPEED   = 7
 
 # ── SMOOTHING ─────────────────────────────────────────────────────
-ALPHA_SLOW_DOWN         = 0.7
+ALPHA_SLOW_DOWN         = 0.75
 ALPHA_SPEED_UP          = 0.25
 MIN_COMMAND_INTERVAL_MS = 300
 
@@ -99,7 +115,7 @@ RECONNECT_INTERVAL = 5.0
 KEEPALIVE_INTERVAL = 20.0
 
 # ── DISPLAY ───────────────────────────────────────────────────────
-WINDOW_TITLE = "LionChief — Safe Distance Control"
+WINDOW_TITLE = "LionChief — Safe Distance"
 SHOW_VIDEO   = True
 
 ZONE_COLORS = {
@@ -109,7 +125,7 @@ ZONE_COLORS = {
     "SAFE":    (0, 180,  60),
     "FAR":     (200, 160, 0),
     "UNKNOWN": (120, 120, 120),
-    "ESCAPE":  (255, 100, 200),   # Train A is chasing Train B
+    "ESCAPE":  (200,  80, 200),
 }
 
 # ── LOGGING ───────────────────────────────────────────────────────
