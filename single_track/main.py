@@ -77,35 +77,47 @@ def mouse_callback(event, x, y, flags, param):
 
 def draw_tracking_circle(frame, pos, color, label: str):
     """
-    Draw the smooth tracking circle around a train.
-    Thin outline + very light fill + centre dot.
-    Looks like a targeting reticle, not a heavy box.
+    Draw tracking circle around a train.
+    Shows LOCKED state (dashed/different style) when train is stopped.
     """
     if pos is None:
         return
     cx, cy, r = pos.x, pos.y, pos.radius
+    locked     = getattr(pos, "locked", False)
 
-    # Very light fill (8% opacity)
-    overlay = frame.copy()
-    cv2.circle(overlay, (cx, cy), r, color, -1)
-    cv2.addWeighted(overlay, 0.08, frame, 0.92, 0, frame)
+    if locked:
+        # Stopped train: smaller solid inner circle + dashed outer ring
+        # Draw dashed circle using line segments
+        import math
+        segs = 16
+        for i in range(segs):
+            if i % 2 == 0:   # draw every other segment = dashed effect
+                a1 = 2 * math.pi * i / segs
+                a2 = 2 * math.pi * (i + 1) / segs
+                p1 = (int(cx + r * math.cos(a1)), int(cy + r * math.sin(a1)))
+                p2 = (int(cx + r * math.cos(a2)), int(cy + r * math.sin(a2)))
+                cv2.line(frame, p1, p2, color, 2)
+        # Small filled centre
+        cv2.circle(frame, (cx, cy), 5, color, -1)
+        state_lbl = "STOPPED"
+    else:
+        # Moving train: solid circle with light fill and crosshair marks
+        overlay = frame.copy()
+        cv2.circle(overlay, (cx, cy), r, color, -1)
+        cv2.addWeighted(overlay, 0.08, frame, 0.92, 0, frame)
+        cv2.circle(frame, (cx, cy), r, color, 2)
+        cv2.line(frame, (cx-r, cy),   (cx-r+8, cy),  color, 2)
+        cv2.line(frame, (cx+r, cy),   (cx+r-8, cy),  color, 2)
+        cv2.line(frame, (cx, cy-r),   (cx, cy-r+8),  color, 2)
+        cv2.line(frame, (cx, cy+r),   (cx, cy+r-8),  color, 2)
+        cv2.circle(frame, (cx, cy), 3, color, -1)
+        state_lbl = ""
 
-    # Main circle outline
-    cv2.circle(frame, (cx, cy), r, color, 2)
-
-    # Small crosshair lines on circle edge
-    cv2.line(frame, (cx-r, cy), (cx-r+8, cy),    color, 2)
-    cv2.line(frame, (cx+r, cy), (cx+r-8, cy),    color, 2)
-    cv2.line(frame, (cx, cy-r), (cx, cy-r+8),    color, 2)
-    cv2.line(frame, (cx, cy+r), (cx, cy+r-8),    color, 2)
-
-    # Centre dot
-    cv2.circle(frame, (cx, cy), 3, color, -1)
-
-    # Label outside circle
-    cv2.putText(frame, label,
+    # Label
+    lbl_text = f"{label} {state_lbl}".strip()
+    cv2.putText(frame, lbl_text,
                 (cx + r + 6, cy - 6),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.52, color, 2)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.50, color, 2)
 
 
 def draw_table_rect(frame, rect, color=(0, 200, 200)):

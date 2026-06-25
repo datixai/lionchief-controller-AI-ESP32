@@ -1,20 +1,26 @@
 # ══════════════════════════════════════════════════════════════════
-#  train_detector.py  —  2-Box MOG2 Tracker with Tracking Circles
+#  train_detector.py  —  Robust MOG2 Tracker v9.0
 #  Harry Locomotive Project 3  |  Datix AI  |  June 2026
 #
-#  SELECTION (3 drags in order):
-#    1. Drag rectangle around TABLE  → defines detection boundary
-#    2. Drag box around TRAIN A      → starts tracking Train A
-#    3. Drag box around TRAIN B      → starts tracking Train B
+#  THREE KEY IMPROVEMENTS:
 #
-#  TRACKING:
-#    Each train has one local search area (SEARCH_RADIUS).
-#    MOG2 finds moving blobs only inside that radius.
-#    A circle follows each train — size scales with blob size.
-#    People outside the table boundary are invisible to detection.
+#  1. REFERENCE PATCH — catches stopped trains.
+#     When MOG2 finds no blob near a train, the tracker compares
+#     the current camera image to a snapshot taken when the train was
+#     last seen. If the image MATCHES → train is stopped there →
+#     position is LOCKED (frozen). If it doesn't match → train moved.
+#     This means a stopped train never loses its tracking circle.
 #
-#  DIRECTION:
-#    Velocity dot-product determines if A is chasing B or vice versa.
+#  2. BLOB MUTEX — prevents both trackers grabbing the same blob.
+#     When trains are close and blobs merge, both trackers might
+#     compete for the same blob. After matching, if both picked the
+#     same blob, only the closer tracker keeps it. The other coasts
+#     on velocity briefly or stays locked in its last position.
+#
+#  3. POSITION LOCK — frozen position when train is stopped.
+#     Rather than coasting (drifting) when no blob is found,
+#     a stopped-confirmed train holds its exact last position.
+#     The tracker only moves again when actual motion is detected.
 # ══════════════════════════════════════════════════════════════════
 
 import cv2
@@ -37,36 +43,45 @@ TRACKING   = "TRACKING"
 
 
 class TrainPosition:
-    def __init__(self, x: int, y: int, radius: int = 25):
+    def __init__(self, x: int, y: int, radius: int = 25,
+                 locked: bool = False):
         self.x      = x
         self.y      = y
-        self.radius = radius   # tracking circle radius (pixels)
+        self.radius = radius
+        self.locked = locked    # True = train is stopped / position frozen
         self.timestamp = time.time()
 
     def as_tuple(self):
         return (self.x, self.y)
 
 
-# ── One-train local tracker ───────────────────────────────────────
+# ── Per-train tracker ─────────────────────────────────────────────
 
 class _TrainTracker:
     """
-    Tracks one train with a local MOG2 blob search.
-    Only looks for motion within SEARCH_RADIUS of last known position.
-    Stores blob size to draw a correctly-sized tracking circle.
+    Tracks one train using:
+      - Local MOG2 blob search (moving trains)
+      - Reference patch comparison (stopped trains)
+      - Position lock (don't drift when stopped)
     """
 
     def __init__(self, label: str):
-        self.label       = label
-        self._px         = None   # float x position
-        self._py         = None   # float y position
-        self._vx         = 0.0   # velocity x
-        self._vy         = 0.0   # velocity y
-        self._active     = False
-        self._seen       = 0.0
-        self._no_blob    = 0
-        self._buf        = deque(maxlen=config.POSITION_SMOOTH_FRAMES)
-        self._blob_area  = 400.0  # running estimate of blob size
+        self.label         = label
+        self._px           = None    # float x
+        self._py           = None    # float y
+        self._vx           = 0.0
+        self._vy           = 0.0
+        self._active       = False
+        self._seen         = 0.0
+        self._buf          = deque(maxlen=config.POSITION_SMOOTH_FRAMES)
+        self._blob_area    = 300.0
+
+        # Stopped-train detection
+        self._ref_gray     = None    # reference patch (grayscale)
+        self._ref_x1       = 0       # patch origin in frame
+        self._ref_y1       = 0
+        self._no_blob_ct   = 0       # consecutive frames without blob
+        self._locked       = False   # True = position frozen (stopped)
 
     @property
     def active(self) -> bool:
@@ -77,32 +92,158 @@ class _TrainTracker:
         return self._px is not None
 
     @property
+    def is_locked(self) -> bool:
+        return self._locked
+
+    @property
     def velocity(self):
         return (self._vx, self._vy)
 
     def init(self, cx: int, cy: int):
-        self._px      = float(cx)
-        self._py      = float(cy)
-        self._vx      = 0.0
-        self._vy      = 0.0
-        self._active  = True
-        self._seen    = time.time()
-        self._no_blob = 0
+        self._px         = float(cx)
+        self._py         = float(cy)
+        self._vx         = 0.0
+        self._vy         = 0.0
+        self._active     = True
+        self._seen       = time.time()
+        self._no_blob_ct = 0
+        self._locked     = False
+        self._ref_gray   = None
         self._buf.clear()
         self._buf.append((cx, cy))
         logger.info(f"[{self.label}] init at ({cx},{cy})")
 
-    def search_and_update(self, fg_masked: np.ndarray):
+    # ── Core update ───────────────────────────────────────────────
+
+    def update_with_blob(self, blob: "dict | None",
+                          gray_frame: np.ndarray):
         """
-        Find largest motion blob within SEARCH_RADIUS.
-        fg_masked is the full-frame MOG2 foreground with table mask applied.
+        Called by DragTracker after blob-mutex assignment.
+        blob = {"cx": int, "cy": int, "area": float} or None.
         """
         if not self.initialized:
             return
 
-        pred_x, pred_y = self._predict()
-        h, w = fg_masked.shape[:2]
-        r    = config.SEARCH_RADIUS
+        if blob is not None:
+            # ── Motion detected — normal update ──────────────────
+            cx, cy, area = blob["cx"], blob["cy"], blob["area"]
+            self._update(cx, cy, area)
+            self._locked     = False
+            self._no_blob_ct = 0
+            # Store fresh reference patch at this confirmed position
+            self._store_reference(gray_frame, cx, cy)
+
+        else:
+            # ── No blob found in local search ─────────────────────
+            self._no_blob_ct += 1
+
+            if self._no_blob_ct >= config.STOP_CONFIRM_FRAMES:
+                # Check if train is still there (stopped)
+                if self._reference_matches(gray_frame):
+                    # Train is stopped — LOCK position
+                    self._locked = True
+                    self._vx    *= 0.0   # zero velocity — not moving
+                    self._vy    *= 0.0
+                    # Append current position to buf (keeps display stable)
+                    if self._px is not None:
+                        self._buf.append((int(round(self._px)),
+                                          int(round(self._py))))
+                    # Still active — just stopped
+                    self._active = True
+                else:
+                    # Patch doesn't match → train moved, we haven't found it
+                    self._locked = False
+                    if self._no_blob_ct < 40:
+                        # Coast briefly on velocity
+                        self._px += self._vx
+                        self._py += self._vy
+                        self._vx *= 0.88
+                        self._vy *= 0.88
+                    else:
+                        # Truly lost after extended search
+                        self._active = False
+            else:
+                # Too few frames without blob — coast briefly
+                if not self._locked:
+                    self._px += self._vx
+                    self._py += self._vy
+                    self._vx *= 0.92
+                    self._vy *= 0.92
+
+    def _update(self, cx: int, cy: int, area: float):
+        if self._px is not None:
+            dx = cx - self._px
+            dy = cy - self._py
+            a  = config.VELOCITY_ALPHA
+            self._vx = a * dx + (1.0 - a) * self._vx
+            self._vy = a * dy + (1.0 - a) * self._vy
+        self._px         = float(cx)
+        self._py         = float(cy)
+        self._blob_area  = 0.85 * self._blob_area + 0.15 * area
+        self._active     = True
+        self._seen       = time.time()
+        self._buf.append((cx, cy))
+
+    # ── Reference patch ───────────────────────────────────────────
+
+    def _store_reference(self, gray: np.ndarray, cx: int, cy: int):
+        """Save a grayscale patch around the train's current position."""
+        h, w  = gray.shape[:2]
+        r     = config.REF_PATCH_HALF
+        x1    = max(0, cx - r)
+        y1    = max(0, cy - r)
+        x2    = min(w, cx + r)
+        y2    = min(h, cy + r)
+        self._ref_gray = gray[y1:y2, x1:x2].copy()
+        self._ref_x1   = x1
+        self._ref_y1   = y1
+
+    def _reference_matches(self, gray: np.ndarray) -> bool:
+        """
+        Compare current frame patch to stored reference.
+        Returns True if the scene looks the same → train still there.
+        """
+        if self._ref_gray is None or self._px is None:
+            return False
+
+        h, w = gray.shape[:2]
+        ph, pw = self._ref_gray.shape[:2]
+        x1 = self._ref_x1
+        y1 = self._ref_y1
+        x2 = min(w, x1 + pw)
+        y2 = min(h, y1 + ph)
+
+        current = gray[y1:y2, x1:x2]
+
+        # Size might differ at edges — use the smaller common region
+        ch, cw = current.shape[:2]
+        rh, rw = self._ref_gray.shape[:2]
+        mh, mw = min(ch, rh), min(cw, rw)
+
+        if mh < 10 or mw < 10:
+            return False
+
+        diff = cv2.absdiff(current[:mh, :mw],
+                           self._ref_gray[:mh, :mw])
+        mean_diff = float(np.mean(diff))
+
+        # Low diff → same scene → train still there (stopped)
+        return mean_diff < config.STOPPED_DIFF_THR
+
+    # ── Local blob search ─────────────────────────────────────────
+
+    def local_search(self, fg_masked: np.ndarray) -> "dict | None":
+        """
+        Find the largest blob within SEARCH_RADIUS of predicted position.
+        Returns blob dict or None.
+        """
+        if not self.initialized:
+            return None
+
+        pred_x = self._px + self._vx
+        pred_y = self._py + self._vy
+        h, w   = fg_masked.shape[:2]
+        r      = config.SEARCH_RADIUS
 
         x1 = max(0, int(pred_x - r))
         y1 = max(0, int(pred_y - r))
@@ -111,15 +252,13 @@ class _TrainTracker:
 
         local = fg_masked[y1:y2, x1:x2]
         if local.size == 0:
-            self._coast()
-            return
+            return None
 
         contours, _ = cv2.findContours(
             local, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         best_area = config.MIN_BLOB_AREA
-        best_cx   = None
-        best_cy   = None
+        best      = None
 
         for c in contours:
             area = cv2.contourArea(c)
@@ -131,69 +270,31 @@ class _TrainTracker:
             cx = int(M["m10"] / M["m00"]) + x1
             cy = int(M["m01"] / M["m00"]) + y1
             best_area = area
-            best_cx   = cx
-            best_cy   = cy
+            best      = {"cx": cx, "cy": cy, "area": area}
 
-        if best_cx is not None:
-            # Update blob size estimate (slow moving average)
-            self._blob_area = 0.9 * self._blob_area + 0.1 * best_area
-            self._update(best_cx, best_cy)
-        else:
-            self._coast()
+        return best
 
-    def _predict(self):
+    def predicted_pos(self):
+        if self._px is None:
+            return (0.0, 0.0)
         return (self._px + self._vx, self._py + self._vy)
 
-    def _update(self, cx: int, cy: int):
-        if self._px is not None:
-            dx = cx - self._px
-            dy = cy - self._py
-            a  = config.VELOCITY_ALPHA
-            self._vx = a * dx + (1.0 - a) * self._vx
-            self._vy = a * dy + (1.0 - a) * self._vy
-        self._px      = float(cx)
-        self._py      = float(cy)
-        self._active  = True
-        self._seen    = time.time()
-        self._no_blob = 0
-        self._buf.append((cx, cy))
-
-    def _coast(self):
-        """Advance by velocity when no blob found."""
-        if self._px is None:
-            return
-        self._px      += self._vx
-        self._py      += self._vy
-        self._no_blob += 1
-        if self._no_blob > 8:
-            self._vx *= 0.92
-            self._vy *= 0.92
-        if self._no_blob > 25:
-            self._active = False
+    # ── Position output ───────────────────────────────────────────
 
     def get_position(self) -> "TrainPosition | None":
         if not self._active or not self._buf:
             return None
         sx = int(round(sum(p[0] for p in self._buf) / len(self._buf)))
         sy = int(round(sum(p[1] for p in self._buf) / len(self._buf)))
-        # Circle radius scaled from blob area
-        r = int(np.sqrt(self._blob_area / np.pi) * 1.6)
-        r = max(config.CIRCLE_RADIUS_MIN, min(config.CIRCLE_RADIUS_MAX, r))
-        return TrainPosition(sx, sy, r)
-
-    def get_raw_pos(self):
-        if self._px is None:
-            return None
-        return (int(round(self._px)), int(round(self._py)))
+        r  = int(np.sqrt(self._blob_area / np.pi) * 1.7)
+        r  = max(config.CIRCLE_RADIUS_MIN, min(config.CIRCLE_RADIUS_MAX, r))
+        return TrainPosition(sx, sy, r, self._locked)
 
     def draw_search_area(self, frame, color):
-        """Draw local search circle on frame (subtle, for debug)."""
-        pos = self.get_raw_pos()
-        if pos:
+        if self._px is not None:
             px = int(self._px + self._vx)
             py = int(self._py + self._vy)
-            cv2.circle(frame, (px, py),
-                       config.SEARCH_RADIUS, color, 1)
+            cv2.circle(frame, (px, py), config.SEARCH_RADIUS, color, 1)
 
     def is_missing(self) -> bool:
         return (time.time() - self._seen) > config.MISSING_TIMEOUT_S
@@ -202,20 +303,17 @@ class _TrainTracker:
         self._px = None; self._py = None
         self._vx = 0.0;  self._vy = 0.0
         self._active = False
-        self._no_blob = 0
+        self._locked = False
+        self._ref_gray = None
+        self._no_blob_ct = 0
         self._buf.clear()
 
 
 # ══════════════════════════════════════════════════════════════════
-#  DragTracker — 3-step selection: table → Train A → Train B
+#  DragTracker
 # ══════════════════════════════════════════════════════════════════
 
 class DragTracker:
-    """
-    Simplified 2-box tracker with table boundary.
-    User drags 3 boxes in order: TABLE, TRAIN A, TRAIN B.
-    Each train tracked by local MOG2 search with tracking circle display.
-    """
 
     def __init__(self):
         self._bg = cv2.createBackgroundSubtractorMOG2(
@@ -229,22 +327,18 @@ class DragTracker:
         self._tkr_a = _TrainTracker("A")
         self._tkr_b = _TrainTracker("B")
 
-        # Table boundary mask
         self._table_mask = None
-        self._table_rect = None   # (x1, y1, x2, y2) in display coords
+        self._table_rect = None
 
-        # Drag state
         self.state       = WAIT_TABLE
         self.drag_start  = None
         self.drag_end    = None
         self.is_dragging = False
 
-        # Flash timestamps
         self.flash_table = 0.0
         self.flash_a     = 0.0
         self.flash_b     = 0.0
 
-        # Try loading saved table mask
         self._load_table_mask()
 
     # ── Properties ────────────────────────────────────────────────
@@ -261,16 +355,12 @@ class DragTracker:
     def tracking_b(self) -> bool:
         return self._tkr_b.active
 
-    @property
-    def has_table_mask(self) -> bool:
-        return self._table_mask is not None
-
     # ── Frame supply ──────────────────────────────────────────────
 
     def set_display_frame(self, frame):
         self._bg.apply(frame, learningRate=config.MOG2_LEARNING_RATE)
 
-    # ── Mouse events ──────────────────────────────────────────────
+    # ── Mouse ─────────────────────────────────────────────────────
 
     def on_mouse_down(self, x, y):
         self.drag_start  = (x, y)
@@ -294,7 +384,6 @@ class DragTracker:
 
         cx = (self.drag_start[0] + self.drag_end[0]) // 2
         cy = (self.drag_start[1] + self.drag_end[1]) // 2
-
         x1 = min(self.drag_start[0], self.drag_end[0])
         y1 = min(self.drag_start[1], self.drag_end[1])
         x2 = max(self.drag_start[0], self.drag_end[0])
@@ -304,62 +393,53 @@ class DragTracker:
             self._set_table_rect(x1, y1, x2, y2)
             self.flash_table = time.time()
             self.state       = WAIT_A
-            logger.info(f"Table boundary set: ({x1},{y1}) → ({x2},{y2})")
 
         elif self.state == WAIT_A:
             self._tkr_a.init(cx, cy)
             self.flash_a = time.time()
             self.state   = WAIT_B
-            logger.info(f"Train A selected at ({cx},{cy})")
 
         elif self.state in (WAIT_B, TRACKING):
             self._tkr_b.init(cx, cy)
             self.flash_b = time.time()
             self.state   = TRACKING
-            logger.info(f"Train B selected at ({cx},{cy})")
 
     # ── Table mask ────────────────────────────────────────────────
 
-    def _set_table_rect(self, x1: int, y1: int, x2: int, y2: int):
+    def _set_table_rect(self, x1, y1, x2, y2):
         self._table_rect = (x1, y1, x2, y2)
         mask = np.zeros((config.DISPLAY_H, config.DISPLAY_W), dtype=np.uint8)
         cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
         self._table_mask = mask
-        # Save to file
-        mask_file = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            config.TABLE_MASK_FILE)
-        with open(mask_file, "w") as f:
+        mf = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          config.TABLE_MASK_FILE)
+        with open(mf, "w") as f:
             json.dump({"rect": [x1, y1, x2, y2]}, f)
-        logger.info("Table mask saved")
+        logger.info(f"Table mask saved ({x1},{y1})→({x2},{y2})")
 
     def _load_table_mask(self):
-        mask_file = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
-            config.TABLE_MASK_FILE)
-        if not os.path.exists(mask_file):
+        mf = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                          config.TABLE_MASK_FILE)
+        if not os.path.exists(mf):
             return
         try:
-            with open(mask_file) as f:
-                data = json.load(f)
-            x1, y1, x2, y2 = data["rect"]
+            with open(mf) as f:
+                d = json.load(f)
+            x1, y1, x2, y2 = d["rect"]
             self._table_rect = (x1, y1, x2, y2)
             mask = np.zeros(
                 (config.DISPLAY_H, config.DISPLAY_W), dtype=np.uint8)
             cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
             self._table_mask = mask
-            self.state = WAIT_A   # table already set — skip to train selection
-            logger.info(f"Table mask loaded from file")
+            self.state       = WAIT_A
+            logger.info("Table mask loaded from file")
         except Exception as e:
             logger.warning(f"Table mask load failed: {e}")
 
     def redraw_table(self):
-        """Press T to re-draw the table boundary."""
         self._table_mask = None
         self._table_rect = None
         self.state       = WAIT_TABLE
-
-    # ── Re-select trains ──────────────────────────────────────────
 
     def reselect_a(self):
         self._tkr_a.reset()
@@ -369,60 +449,88 @@ class DragTracker:
         self._tkr_b.reset()
         self.state = WAIT_B
 
-    # ── Update ────────────────────────────────────────────────────
+    # ── Main update with blob mutex ───────────────────────────────
 
     def update(self, display_frame) -> tuple:
         """
-        Build MOG2 fg with table mask, run local search per train.
-        Returns (pos_a, pos_b).
+        Full pipeline:
+          1. MOG2 foreground (with table mask)
+          2. Local blob search for each train independently
+          3. Blob MUTEX — if both trackers found the same blob,
+             only the closer one keeps it
+          4. Update each tracker with its assigned blob (or None)
+          5. Return positions
         """
+        # Build foreground mask
         fg = self._bg.apply(display_frame,
                             learningRate=config.MOG2_LEARNING_RATE)
         fg = cv2.morphologyEx(fg, cv2.MORPH_OPEN, self._kernel)
         fg = cv2.dilate(fg, self._kernel, iterations=1)
 
-        # Apply table mask — zero out everything outside the table
         if self._table_mask is not None:
             fg = cv2.bitwise_and(fg, self._table_mask)
 
-        if self._tkr_a.initialized:
-            self._tkr_a.search_and_update(fg)
-        if self._tkr_b.initialized:
-            self._tkr_b.search_and_update(fg)
+        # Convert to grayscale for reference patch comparison
+        gray = cv2.cvtColor(display_frame, cv2.COLOR_BGR2GRAY)
+
+        # Local blob search per train
+        blob_a = self._tkr_a.local_search(fg) if self._tkr_a.initialized else None
+        blob_b = self._tkr_b.local_search(fg) if self._tkr_b.initialized else None
+
+        # ── BLOB MUTEX ────────────────────────────────────────────
+        # If both trackers found a blob at the same location → conflict.
+        # Only the closer tracker keeps its blob; the other gets None.
+        if blob_a is not None and blob_b is not None:
+            same = self._blobs_overlap(blob_a, blob_b)
+            if same:
+                pred_a = self._tkr_a.predicted_pos()
+                pred_b = self._tkr_b.predicted_pos()
+                da = np.sqrt((blob_a["cx"]-pred_a[0])**2 +
+                             (blob_a["cy"]-pred_a[1])**2)
+                db = np.sqrt((blob_b["cx"]-pred_b[0])**2 +
+                             (blob_b["cy"]-pred_b[1])**2)
+                if da <= db:
+                    blob_b = None   # A is closer — B coasts/locks
+                else:
+                    blob_a = None   # B is closer — A coasts/locks
+                logger.debug(
+                    f"Blob mutex triggered — "
+                    f"{'A' if blob_a else 'B'} keeps blob")
+
+        # Update trackers
+        self._tkr_a.update_with_blob(blob_a, gray)
+        self._tkr_b.update_with_blob(blob_b, gray)
 
         return self._tkr_a.get_position(), self._tkr_b.get_position()
+
+    def _blobs_overlap(self, ba: dict, bb: dict) -> bool:
+        """True if two blobs are close enough to be considered the same."""
+        dx   = ba["cx"] - bb["cx"]
+        dy   = ba["cy"] - bb["cy"]
+        dist = np.sqrt(dx*dx + dy*dy)
+        # Overlap if centres are within half a search radius of each other
+        return dist < (config.SEARCH_RADIUS * 0.6)
 
     # ── Direction detection ───────────────────────────────────────
 
     def a_is_chasing_b(self, pos_a, pos_b) -> bool:
-        """
-        True when Train A is BEHIND Train B and heading toward it.
-        Uses velocity dot product — no head/tail needed.
-        """
         if pos_a is None or pos_b is None:
             return False
         avx, avy = self._tkr_a.velocity
-        a_spd    = np.sqrt(avx**2 + avy**2)
-        if a_spd < 0.3:
+        spd = np.sqrt(avx**2 + avy**2)
+        if spd < 0.3:
             return False
-        # Vector from A toward B
         dx  = pos_b.x - pos_a.x
         dy  = pos_b.y - pos_a.y
-        dot = avx * dx + avy * dy
-        return dot > 0
+        return (avx * dx + avy * dy) > 0
 
-    def facing_gap(self, pos_a, pos_b,
-                   a_chasing: bool) -> "float | None":
-        """
-        Centre-to-centre gap minus both radii = gap between surfaces.
-        """
+    def facing_gap(self, pos_a, pos_b, a_chasing: bool) -> "float | None":
         if pos_a is None or pos_b is None:
             return None
-        dx   = pos_a.x - pos_b.x
-        dy   = pos_a.y - pos_b.y
-        dist = float(np.sqrt(dx*dx + dy*dy))
-        # Subtract estimated train radii so gap is surface-to-surface
-        gap  = dist - pos_a.radius - pos_b.radius
+        dx  = pos_a.x - pos_b.x
+        dy  = pos_a.y - pos_b.y
+        d   = float(np.sqrt(dx*dx + dy*dy))
+        gap = d - pos_a.radius - pos_b.radius
         return max(0.0, gap)
 
     # ── Safety ────────────────────────────────────────────────────
@@ -433,15 +541,17 @@ class DragTracker:
     def is_b_missing(self) -> bool:
         return not self._tkr_b.initialized or self._tkr_b.is_missing()
 
-    # ── Status text ───────────────────────────────────────────────
+    # ── Status ────────────────────────────────────────────────────
 
     def instruction_text(self) -> str:
         msgs = {
             WAIT_TABLE: "STEP 1 — DRAG a box around the TABLE  (whole track area)",
             WAIT_A:     "STEP 2 — DRAG a box around  TRAIN A  (front train)",
             WAIT_B:     "STEP 3 — DRAG a box around  TRAIN B  (rear BLE train)",
-            TRACKING:   (f"Tracking — A:{'OK' if self._tkr_a.active else 'LOST (press A)'}  "
-                         f"B:{'OK' if self._tkr_b.active else 'LOST (press B)'}"),
+            TRACKING:   (
+                f"A:{'LOCKED' if self._tkr_a.is_locked else 'tracking' if self._tkr_a.active else 'LOST'}  "
+                f"B:{'LOCKED' if self._tkr_b.is_locked else 'tracking' if self._tkr_b.active else 'LOST'}"
+            ),
         }
         return msgs.get(self.state, "")
 
