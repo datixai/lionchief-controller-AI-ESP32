@@ -163,20 +163,33 @@ class _TrainTracker:
         # Coasting: decays with frames without blob
         return max(0.1, 1.0 - self._no_blob_ct / 30.0)
 
-    def init(self, cx: int, cy: int):
-        self._px         = float(cx)
-        self._py         = float(cy)
-        self._vx         = 0.0
-        self._vy         = 0.0
-        self._active     = True
-        self._seen       = time.time()
-        self._no_blob_ct = 0
+    def init(self, cx: int, cy: int, gray_frame=None):
+        self._px          = float(cx)
+        self._py          = float(cy)
+        self._vx          = 0.0
+        self._vy          = 0.0
+        self._active      = True
+        self._seen        = time.time()
+        self._no_blob_ct  = 0
         self._fresh_blobs = 0
-        self._locked     = False
-        self._ref_gray   = None
+        self._locked      = False
+        self._ref_gray    = None
         self._buf.clear()
         self._buf.append((cx, cy))
-        logger.info(f"[{self.label}] init ({cx},{cy})")
+        # Store reference patch immediately so stopped-train
+        # detection works from the very first frame
+        if gray_frame is not None:
+            self._store_ref(gray_frame, cx, cy)
+            logger.info(
+                f"[{self.label}] init ({cx},{cy}) — ref patch stored")
+        else:
+            logger.info(f"[{self.label}] init ({cx},{cy})")
+
+    # Frames to HOLD position after selection before coast/lost logic.
+    # Gives train time to start moving after the user selects it.
+    # MOG2 learns stationary trains as background, so we hold position
+    # while the train is still and wait for motion to appear.
+    _INITIAL_HOLD_FRAMES = 90   # 3 seconds at 30fps
 
     def update_with_blob(self, blob, gray_frame: np.ndarray,
                           track_path: "TrackPath | None" = None):
@@ -184,8 +197,8 @@ class _TrainTracker:
             return
 
         if blob is not None:
+            # ── Blob found — train is MOVING ──────────────────────
             cx, cy, area = blob["cx"], blob["cy"], blob["area"]
-            # Snap to track path if available
             if track_path and track_path.has_path:
                 cx, cy = track_path.snap(cx, cy)
             self._update(cx, cy, area)
@@ -193,33 +206,47 @@ class _TrainTracker:
             self._no_blob_ct  = 0
             self._fresh_blobs = min(self._fresh_blobs + 1, 20)
             self._store_ref(gray_frame, cx, cy)
+
         else:
+            # ── No blob found ──────────────────────────────────────
             self._no_blob_ct += 1
             self._fresh_blobs = 0
-            if self._no_blob_ct >= config.STOP_CONFIRM_FRAMES:
-                if self._ref_matches(gray_frame):
-                    self._locked = True
-                    self._vx     = 0.0
-                    self._vy     = 0.0
-                    self._active = True
-                    if self._px is not None:
-                        self._buf.append((int(round(self._px)),
-                                          int(round(self._py))))
-                else:
-                    self._locked = False
-                    if self._no_blob_ct < 40:
-                        self._px  = (self._px or 0) + self._vx
-                        self._py  = (self._py or 0) + self._vy
-                        self._vx *= 0.88
-                        self._vy *= 0.88
-                    else:
-                        self._active = False
+
+            if self._no_blob_ct <= self._INITIAL_HOLD_FRAMES:
+                # HOLD PHASE: just selected or recently seen.
+                # Train may be stationary (MOG2 background) — stay put.
+                # This prevents losing the tracker in the first seconds.
+                self._active = True
+                self._locked = False
+                if self._px is not None:
+                    self._buf.append((int(round(self._px)),
+                                      int(round(self._py))))
+
+            elif self._ref_matches(gray_frame):
+                # LOCK PHASE: ref patch confirms train is still there.
+                # Train stopped and was confirmed in place.
+                self._locked = True
+                self._vx     = 0.0
+                self._vy     = 0.0
+                self._active = True
+                if self._px is not None:
+                    self._buf.append((int(round(self._px)),
+                                      int(round(self._py))))
+
             else:
-                if not self._locked:
+                # COAST / LOST: train may have moved without detection.
+                self._locked = False
+                coast_limit  = self._INITIAL_HOLD_FRAMES + 60
+                if self._no_blob_ct < coast_limit:
+                    # Coast on velocity briefly
                     self._px  = (self._px or 0) + self._vx
                     self._py  = (self._py or 0) + self._vy
-                    self._vx *= 0.92
-                    self._vy *= 0.92
+                    self._vx *= 0.85
+                    self._vy *= 0.85
+                    self._active = True
+                else:
+                    # Truly lost — mark inactive
+                    self._active = False
 
     def _update(self, cx, cy, area):
         if self._px is not None:
@@ -336,8 +363,9 @@ class DragTracker:
         self.track_path = TrackPath()
         self.track_path.load()
 
-        self._table_mask = None
-        self._table_rect = None
+        self._table_mask  = None
+        self._table_rect  = None
+        self._latest_gray = None   # used to pass gray to init()
 
         self.state       = WAIT_TABLE
         self.drag_start  = None
@@ -370,6 +398,8 @@ class DragTracker:
 
     def set_display_frame(self, frame):
         self._bg.apply(frame, learningRate=config.MOG2_LEARNING_RATE)
+        # Store gray frame so init() can use it for reference patch
+        self._latest_gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     def on_mouse_down(self, x, y):
         self.drag_start=(x,y); self.drag_end=(x,y); self.is_dragging=True
@@ -393,10 +423,11 @@ class DragTracker:
             self._set_table(x1,y1,x2,y2)
             self.flash_table=time.time(); self.state=WAIT_A
         elif self.state==WAIT_A:
-            self._tkr_a.init(cx,cy)
+            # Pass current gray frame so reference patch is stored now
+            self._tkr_a.init(cx, cy, self._latest_gray)
             self.flash_a=time.time(); self.state=WAIT_B
         elif self.state in (WAIT_B,TRACKING):
-            self._tkr_b.init(cx,cy)
+            self._tkr_b.init(cx, cy, self._latest_gray)
             self.flash_b=time.time(); self.state=TRACKING
 
     def _set_table(self, x1, y1, x2, y2):
