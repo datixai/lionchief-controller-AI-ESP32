@@ -1,14 +1,18 @@
 # ══════════════════════════════════════════════════════════════════
-#  ble_controller.py  —  Dual LionChief BLE Controller
+#  ble_controller.py  —  Dual BLE Controller
 #  Harry Locomotive Project 3 BT  |  Datix AI  |  June 2026
 #
-#  Controls BOTH trains via Bluetooth independently.
-#  Each train runs in its own asyncio loop on its own background thread.
+#  SingleTrainBLE  — controls one LionChief train independently.
+#  DualBLEController — wraps both trains with combined API.
 #
-#  DualTrainController wraps both and exposes a clean joint API:
-#    - emergency_stop_all()  → stops both simultaneously
-#    - set_speeds(a, b)      → sets both in one call
-#    - connected_both        → True only when both are online
+#  Each train has its OWN:
+#    - BLE connection thread
+#    - current_speed / user_speed tracking
+#    - set_speed(), send_stop(), keepalive(), horn, lights etc.
+#
+#  Commands NEVER cross between trains.
+#  Train A keys only send to Train A.
+#  Train B keys only send to Train B.
 # ══════════════════════════════════════════════════════════════════
 
 import asyncio
@@ -25,13 +29,14 @@ logger = logging.getLogger("BLE")
 class SingleTrainBLE:
     """
     BLE controller for one LionChief train.
-    Runs its own asyncio loop in a daemon thread.
+    Completely independent — no shared state with the other train.
     """
 
-    def __init__(self, mac: str, name_prefix: str, label: str):
+    def __init__(self, mac: str, name: str, label: str,
+                 default_speed: int):
         self._mac          = mac.strip()
-        self._name_prefix  = name_prefix
-        self._label        = label        # "TrainA" or "TrainB" for logs
+        self._name         = name
+        self._label        = label          # "A" or "B"
         self._client       = None
         self._char         = None
         self._connected    = False
@@ -40,25 +45,21 @@ class SingleTrainBLE:
         self._stop_event   = threading.Event()
 
         self.current_speed = 0
-        self.user_speed    = config.DEFAULT_SPEED_A if label == "TrainA" \
-                             else config.DEFAULT_SPEED_B
+        self.user_speed    = default_speed
         self.connect_count = 0
-        self.cmd_count     = 0
-
-        # Rate limiting per train
-        self._last_cmd_time  = 0.0
-        self._last_cmd_speed = -1
 
     # ── Lifecycle ─────────────────────────────────────────────────
 
     def start(self):
         self._thread = threading.Thread(
-            target=self._run_loop, daemon=True, name=f"BLE-{self._label}")
+            target=self._run_loop,
+            daemon=True,
+            name=f"BLE-Train{self._label}")
         self._thread.start()
-        logger.info(f"[{self._label}] BLE started — target: {self._mac}")
+        logger.info(f"[Train {self._label}] BLE started — {self._mac}")
 
     def shutdown(self):
-        self.set_speed(0)
+        self.send_stop_raw()
         time.sleep(0.3)
         self._stop_event.set()
         if self._loop and self._loop.is_running():
@@ -71,53 +72,49 @@ class SingleTrainBLE:
     def connected(self) -> bool:
         return self._connected
 
-    # ── Commands ──────────────────────────────────────────────────
+    # ── Speed commands ─────────────────────────────────────────────
 
     def set_speed(self, speed: int):
-        """Set speed (0-7). Saves user_speed if speed > 0."""
+        """Set speed 0-7. Saves user_speed if speed > 0."""
         speed = max(0, min(7, speed))
         self.current_speed = speed
         if speed > 0:
             self.user_speed = speed
-        self._queue(config.SPEED_CMDS[speed], f"SPEED {speed}")
-        self._last_cmd_speed = speed
-        self._last_cmd_time  = time.time()
+        self._queue(config.SPEED_CMDS[speed],
+                    f"Train{self._label} SPEED {speed}")
 
-    def emergency_stop(self):
-        """Immediate stop — bypasses rate limiting."""
+    def send_stop(self):
+        """Collision stop — saves user_speed before stopping."""
+        if self.current_speed > 0:
+            self.user_speed = self.current_speed
         self.current_speed = 0
-        self._queue(config.CMD_STOP, "EMERGENCY STOP")
-        self._last_cmd_speed = 0
-        self._last_cmd_time  = time.time()
+        self._queue(config.CMD_STOP, f"Train{self._label} STOP")
 
     def send_stop_raw(self):
-        """Send stop without touching user_speed tracking."""
-        self._queue(config.CMD_STOP, "STOP")
+        """Stop without touching user_speed (for repeated stops)."""
+        self.current_speed = 0
+        self._queue(config.CMD_STOP, f"Train{self._label} STOP-RAW")
+
+    def resume(self):
+        """Resume at last user_speed."""
+        self.set_speed(self.user_speed)
 
     def keepalive(self):
-        """Keepalive — only sends if speed > 0."""
         if self.current_speed > 0:
-            self._queue(
-                config.SPEED_CMDS[self.current_speed], "keepalive")
+            self._queue(config.SPEED_CMDS[self.current_speed],
+                        f"Train{self._label} keepalive")
 
-    def should_send(self, new_speed: int) -> bool:
-        """True if enough time has passed and speed has changed."""
-        now      = time.time()
-        time_ok  = (now - self._last_cmd_time) * 1000 >= config.MIN_COMMAND_INTERVAL_MS
-        speed_ok = new_speed != self._last_cmd_speed
-        return time_ok and speed_ok
+    # ── Accessory commands ─────────────────────────────────────────
 
-    def forward(self):    self._queue(config.CMD_FORWARD,  "FORWARD")
-    def reverse(self):    self._queue(config.CMD_REVERSE,  "REVERSE")
-    def horn_on(self):    self._queue(config.CMD_HORN_ON,  "HORN ON")
-    def horn_off(self):   self._queue(config.CMD_HORN_OFF, "HORN OFF")
-    def bell_on(self):    self._queue(config.CMD_BELL_ON,  "BELL ON")
-    def bell_off(self):   self._queue(config.CMD_BELL_OFF, "BELL OFF")
-    def lights_on(self):  self._queue(config.CMD_LIGHT_ON, "LIGHTS ON")
-    def lights_off(self): self._queue(config.CMD_LIGHT_OFF,"LIGHTS OFF")
-    def announce(self):   self._queue(config.CMD_ANNOUNCE, "ANNOUNCE")
+    def horn_on(self):    self._queue(config.CMD_HORN_ON,  f"Train{self._label} HORN ON")
+    def horn_off(self):   self._queue(config.CMD_HORN_OFF, f"Train{self._label} HORN OFF")
+    def bell_on(self):    self._queue(config.CMD_BELL_ON,  f"Train{self._label} BELL ON")
+    def bell_off(self):   self._queue(config.CMD_BELL_OFF, f"Train{self._label} BELL OFF")
+    def lights_on(self):  self._queue(config.CMD_LIGHT_ON, f"Train{self._label} LIGHTS ON")
+    def lights_off(self): self._queue(config.CMD_LIGHT_OFF,f"Train{self._label} LIGHTS OFF")
+    def announce(self):   self._queue(config.CMD_ANNOUNCE, f"Train{self._label} ANNOUNCE")
 
-    # ── Internal ──────────────────────────────────────────────────
+    # ── Internal BLE ──────────────────────────────────────────────
 
     def _queue(self, cmd: bytes, label: str):
         if not self._loop:
@@ -126,7 +123,7 @@ class SingleTrainBLE:
             asyncio.run_coroutine_threadsafe(
                 self._send(cmd, label), self._loop)
         else:
-            logger.debug(f"[{self._label}] '{label}' dropped — not connected")
+            logger.debug(f"[Train{self._label}] '{label}' dropped — not connected")
 
     def _run_loop(self):
         self._loop = asyncio.new_event_loop()
@@ -143,43 +140,46 @@ class SingleTrainBLE:
         try:
             mac = self._mac
             if not mac:
-                logger.info(f"[{self._label}] Scanning for '{self._name_prefix}'...")
+                logger.info(f"[Train{self._label}] Scanning for '{self._name}'...")
                 devices = await BleakScanner.discover(timeout=10.0)
                 for d in devices:
-                    name = (d.name or "").strip()
-                    if name.upper().startswith(self._name_prefix.upper()):
+                    if (d.name or "").startswith(self._name):
                         mac = d.address
                         self._mac = mac
-                        logger.info(f"[{self._label}] Found by name: {name} [{mac}]")
                         break
                 if not mac:
-                    logger.warning(f"[{self._label}] Not found — powered on?")
+                    logger.warning(
+                        f"[Train{self._label}] Not found — powered on?")
                     return
 
-            logger.info(f"[{self._label}] Connecting to {mac}...")
+            logger.info(f"[Train{self._label}] Connecting to {mac}...")
             self._client = BleakClient(
                 mac, disconnected_callback=self._on_disconnect)
             await self._client.connect(timeout=15.0)
 
             svc = self._client.services.get_service(config.SERVICE_UUID)
             if not svc:
-                logger.error(f"[{self._label}] LionChief service not found")
+                logger.error(
+                    f"[Train{self._label}] LionChief service not found")
                 await self._client.disconnect()
                 return
 
-            self._char = svc.get_characteristic(config.CHARACTERISTIC_UUID)
+            self._char = svc.get_characteristic(
+                config.CHARACTERISTIC_UUID)
             if not self._char:
-                logger.error(f"[{self._label}] Characteristic not found")
+                logger.error(
+                    f"[Train{self._label}] Characteristic not found")
                 await self._client.disconnect()
                 return
 
             self._connected   = True
             self.connect_count += 1
-            logger.info(f"[{self._label}] ✅ Connected [{mac}] "
-                        f"(#{self.connect_count})")
+            logger.info(
+                f"[Train{self._label}] Connected [{mac}] "
+                f"(#{self.connect_count})")
 
         except Exception as e:
-            logger.error(f"[{self._label}] Connect failed: {e}")
+            logger.error(f"[Train{self._label}] Connect failed: {e}")
             self._connected = False
             self._client    = None
             self._char      = None
@@ -189,11 +189,12 @@ class SingleTrainBLE:
             if self._client and self._connected and self._char:
                 await self._client.write_gatt_char(
                     self._char.uuid, cmd, response=False)
-                self.cmd_count += 1
-                logger.info(f"[{self._label}] ▶ {label:25s} "
-                            f"[{' '.join(f'{b:02X}' for b in cmd)}]")
+                logger.info(
+                    f"[Train{self._label}] >> {label}  "
+                    f"[{' '.join(f'{b:02X}' for b in cmd)}]")
         except Exception as e:
-            logger.error(f"[{self._label}] Send '{label}' failed: {e}")
+            logger.error(
+                f"[Train{self._label}] Send '{label}' failed: {e}")
             self._connected = False
 
     async def _disconnect(self):
@@ -208,41 +209,36 @@ class SingleTrainBLE:
     def _on_disconnect(self, client):
         self._connected = False
         self._char      = None
-        logger.warning(f"[{self._label}] Disconnected — reconnecting in 5s")
+        logger.warning(
+            f"[Train{self._label}] Disconnected — reconnecting...")
 
 
 # ══════════════════════════════════════════════════════════════════
-#  DUAL TRAIN CONTROLLER — wraps both trains with joint API
+#  DualBLEController — wraps both trains with unified API
 # ══════════════════════════════════════════════════════════════════
 
-class DualTrainController:
+class DualBLEController:
     """
-    Manages both BLE trains as a single unit.
-
-    train_a → front train (controlled but normally runs freely)
-    train_b → rear train  (primary follower — adjusted by gap)
-
-    Cooperative control:
-        When gap is closing → slow B, optionally speed up A
-        When gap is opening → slow A, optionally speed up B
-        Emergency          → STOP BOTH immediately
+    Manages both BLE trains independently.
+    Train A and Train B have completely separate BLE threads.
+    Commands NEVER cross between trains.
     """
 
     def __init__(self):
         self.train_a = SingleTrainBLE(
-            config.TRAIN_A_MAC, config.TRAIN_A_NAME, "TrainA")
+            config.TRAIN_A_MAC, config.TRAIN_A_NAME,
+            "A", config.DEFAULT_SPEED_A)
         self.train_b = SingleTrainBLE(
-            config.TRAIN_B_MAC, config.TRAIN_B_NAME, "TrainB")
+            config.TRAIN_B_MAC, config.TRAIN_B_NAME,
+            "B", config.DEFAULT_SPEED_B)
 
     def start(self):
-        """Start both BLE threads."""
         self.train_a.start()
         self.train_b.start()
         logger.info("Dual BLE controller started")
 
     def shutdown(self):
-        """Stop both trains cleanly."""
-        logger.info("Shutting down dual BLE controller...")
+        logger.info("Shutting down both BLE trains...")
         self.train_a.shutdown()
         self.train_b.shutdown()
 
@@ -258,38 +254,12 @@ class DualTrainController:
     def connected_both(self) -> bool:
         return self.train_a.connected and self.train_b.connected
 
-    def emergency_stop_all(self):
-        """Stop BOTH trains immediately — bypasses rate limiting."""
-        self.train_a.emergency_stop()
-        self.train_b.emergency_stop()
-        logger.warning("EMERGENCY STOP — both trains")
-
-    def set_speeds(self, speed_a: int, speed_b: int):
-        """
-        Set both train speeds.
-        Each train's rate-limiting is checked independently.
-        """
-        speed_a = max(0, min(7, speed_a))
-        speed_b = max(0, min(7, speed_b))
-
-        if self.train_a.should_send(speed_a):
-            self.train_a.set_speed(speed_a)
-
-        if self.train_b.should_send(speed_b):
-            self.train_b.set_speed(speed_b)
+    def emergency_stop_both(self):
+        """Stop BOTH trains immediately — used in DANGER zone."""
+        self.train_a.send_stop_raw()
+        self.train_b.send_stop_raw()
+        logger.warning("[DANGER] Emergency stop — BOTH trains")
 
     def keepalive(self):
-        """Send keepalive to both trains."""
         self.train_a.keepalive()
         self.train_b.keepalive()
-
-    def set_user_speed_a(self, speed: int):
-        self.train_a.user_speed = max(1, min(7, speed))
-
-    def set_user_speed_b(self, speed: int):
-        self.train_b.user_speed = max(1, min(7, speed))
-
-    def set_user_speeds(self, speed: int):
-        """Set same cruising speed for both trains."""
-        self.set_user_speed_a(speed)
-        self.set_user_speed_b(speed)
