@@ -9,8 +9,8 @@
 #    → Y = auto control   N = manual control
 #
 #  SPEED KEYS:
-#    ↑ / +   Speed up Train B
-#    ↓ / -   Speed down Train B
+#    [UP] / +   Speed up Train B
+#    [DOWN] / -   Speed down Train B
 #    1-7     Set exact speed
 #    M       Toggle Manual ↔ Auto
 #    S       Stop    R = Resume    P = Pause
@@ -34,9 +34,14 @@ from train_detector   import (DragTracker, pixel_distance,
 from speed_controller import SpeedController, Zone
 from ble_controller   import TrainBLEController
 
-handlers = [logging.StreamHandler(sys.stdout)]
+import io
+# Force UTF-8 on Windows console to prevent emoji/unicode errors
+_stdout_utf8 = io.TextIOWrapper(
+    sys.stdout.buffer, encoding='utf-8', errors='replace')
+handlers = [logging.StreamHandler(_stdout_utf8)]
 if config.LOG_TO_FILE:
-    handlers.append(logging.FileHandler(config.LOG_FILE, mode="a"))
+    handlers.append(logging.FileHandler(
+        config.LOG_FILE, mode="a", encoding='utf-8'))
 logging.basicConfig(level=logging.INFO,
                     format="%(asctime)s [%(name)s] %(message)s",
                     datefmt="%H:%M:%S", handlers=handlers)
@@ -131,6 +136,28 @@ def draw_table_rect(frame, rect, color=(0, 200, 200)):
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1)
 
 
+def draw_confidence_bar(frame, x: int, y: int, confidence: float,
+                          color, label: str):
+    """Draw a small coloured confidence bar next to a train label."""
+    bar_w = 40
+    bar_h = 6
+    filled = int(bar_w * max(0.0, min(1.0, confidence)))
+    # Background
+    cv2.rectangle(frame, (x, y), (x+bar_w, y+bar_h), (50,50,50), -1)
+    # Filled part — colour depends on confidence level
+    if confidence > 0.75:
+        bar_col = (0, 200, 60)
+    elif confidence > 0.4:
+        bar_col = (0, 180, 220)
+    else:
+        bar_col = (0, 60, 220)
+    cv2.rectangle(frame, (x, y), (x+filled, y+bar_h), bar_col, -1)
+    cv2.rectangle(frame, (x, y), (x+bar_w, y+bar_h), (100,100,100), 1)
+    cv2.putText(frame, f"{confidence:.0%}",
+                (x+bar_w+4, y+bar_h),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.32, bar_col, 1)
+
+
 def draw_confirm_overlay(display):
     h, w = display.shape[:2]
     ov = display.copy()
@@ -153,13 +180,21 @@ def draw_confirm_overlay(display):
 # ── Overlay ───────────────────────────────────────────────────────
 
 def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
-                 speed, user_speed, ble_ok, manual_mode, a_chasing):
+                 speed, user_speed, ble_ok, manual_mode, a_chasing,
+                 conf_a=1.0, conf_b=1.0, ctrl=None):
     h, w = display.shape[:2]
     now  = time.time()
     zcol = config.ZONE_COLORS.get(zone, (120,120,120))
 
     # Table boundary (subtle tint inside rectangle)
     draw_table_rect(display, tracker._table_rect)
+
+    # Track path overlay (dots showing recorded loop)
+    if tracker.track_path.has_path:
+        for px, py in tracker.track_path.points[::3]:  # every 3rd point
+            cv2.circle(display, (int(px), int(py)), 2,
+                       (80, 60, 0) if not tracker.track_path.recording
+                       else (0, 200, 200), -1)
 
     # Search area circles (very subtle dark gray)
     if pos_a:
@@ -171,12 +206,24 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
     draw_tracking_circle(display, pos_a, (0,165,255), "Train A")
     draw_tracking_circle(display, pos_b, (0,220, 50), f"Train B  {speed}")
 
+    # Confidence bars for each train
+    if pos_a:
+        draw_confidence_bar(display, pos_a.x+pos_a.radius+10,
+                            pos_a.y-20, conf_a, (0,165,255), "A")
+    if pos_b:
+        draw_confidence_bar(display, pos_b.x+pos_b.radius+10,
+                            pos_b.y-20, conf_b, (0,220,50), "B")
+
     # Gap line between trains
     if pos_a and pos_b and dist is not None:
         cv2.line(display, (pos_a.x,pos_a.y), (pos_b.x,pos_b.y), zcol, 1)
         mx = (pos_a.x + pos_b.x) // 2
         my = (pos_a.y + pos_b.y) // 2
-        cv2.putText(display, f"{dist:.0f}px | {zone}",
+        rate_str = ""
+        if hasattr(ctrl, "gap_rate") and abs(ctrl.gap_rate) > 0.5:
+            arrow = "[DOWN]" if ctrl.gap_rate < 0 else "[UP]"
+            rate_str = f" {arrow}{abs(ctrl.gap_rate):.0f}px/f"
+        cv2.putText(display, f"{dist:.0f}px | {zone}{rate_str}",
                     (mx+6, my-6),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.52, zcol, 2)
 
@@ -218,7 +265,7 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
         cv2.rectangle(display, (0,0), (w,48), barc, -1)
 
         if manual_mode:
-            msg  = f"MANUAL MODE — ↑↓ or +- to adjust speed"
+            msg  = f"MANUAL MODE — [UP][DOWN] or +- to adjust speed"
             mcol = (0,200,255)
         elif zone == Zone.ESCAPE:
             msg  = f"A IS BEHIND B — Train B escaping (speed {speed})"
@@ -262,7 +309,7 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
             fy = h//2 - 28
             cv2.rectangle(display,(0,fy),(w,fy+50),(15,15,15),-1)
             cv2.rectangle(display,(0,fy),(w,fy+50),col,3)
-            cv2.putText(display, f"  ✅  {msg}",
+            cv2.putText(display, f"  [OK]  {msg}",
                         (20,fy+34), cv2.FONT_HERSHEY_SIMPLEX,0.82,col,2)
             break
 
@@ -285,7 +332,7 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
     # Bottom bar
     cv2.rectangle(display,(0,h-22),(w-130,h),(18,18,18),-1)
     cv2.putText(display,
-                "DRAG=select  A/B=reselect  ↑↓/+-=Speed  M=Mode  "
+                "DRAG=select  A/B=reselect  [UP][DOWN]/+-=Speed  M=Mode  "
                 "S=Stop  R=Resume  T=Table  H=Horn  Q=Quit",
                 (8,h-7),cv2.FONT_HERSHEY_SIMPLEX,0.32,(120,120,120),1)
     return display
@@ -320,7 +367,7 @@ def main():
     logger.info("Warming up camera...")
     for _ in range(config.CAMERA_WARMUP_FRAMES):
         cap.read()
-    logger.info("Camera ready ✅")
+    logger.info("Camera ready [OK]")
 
     _tracker = DragTracker()
     ctrl     = SpeedController()
@@ -330,6 +377,7 @@ def main():
 
     manual_mode     = False
     waiting_confirm = False
+    auto_paused     = False
     prev_state      = _tracker.state
     horn_on         = False
     lights_on       = False
@@ -386,9 +434,37 @@ def main():
             last_ka = now
             ble.keepalive()
 
+        conf_a = _tracker.confidence_a()
+        conf_b = _tracker.confidence_b()
+
+        # AUTO-PAUSE: if either tracker lost for too long → stop Train B
+        a_missing = _tracker.is_a_missing()
+        b_missing = _tracker.is_b_missing()
+        if _tracker.ready and (a_missing or b_missing):
+            if not auto_paused:
+                auto_paused = True
+                ble.send_stop_raw()
+                logger.warning(
+                    "AUTO-PAUSED — tracker lost "
+                    f"({'A' if a_missing else 'B'})")
+        elif auto_paused and not a_missing and not b_missing:
+            auto_paused = False
+            logger.info("AUTO-RESUMED — both trains reacquired")
+
         draw_overlay(display, _tracker, pos_a, pos_b, dist, zone,
                      speed, ctrl.user_speed, ble.connected,
-                     manual_mode, a_chasing)
+                     manual_mode or auto_paused, a_chasing,
+                     conf_a, conf_b, ctrl)
+
+        # Auto-pause banner
+        if auto_paused:
+            h2, w2 = display.shape[:2]
+            cv2.rectangle(display, (0, h2//2-22), (w2, h2//2+22),
+                          (0,0,120), -1)
+            cv2.putText(display,
+                        "AUTO-PAUSED — tracker lost, re-select train A or B",
+                        (20, h2//2+8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0,80,255), 2)
 
         if waiting_confirm:
             draw_confirm_overlay(display)
@@ -409,7 +485,7 @@ def main():
             elif k in (ord('n'), ord('N')):
                 waiting_confirm = False
                 manual_mode     = True
-                logger.info("MANUAL mode — use ↑↓ or 1-7")
+                logger.info("MANUAL mode — use [UP][DOWN] or 1-7")
             continue
 
         key = raw_key & 0xFF
@@ -422,6 +498,15 @@ def main():
             _tracker.reselect_b()
         elif key in (ord('t'), ord('T')):
             _tracker.redraw_table()
+
+        elif key in (ord('l'), ord('L')):
+            tp = _tracker.track_path
+            if tp.recording:
+                tp.stop_recording()
+                logger.info(f"Path recording STOPPED — {len(tp.points)} pts saved")
+            else:
+                tp.start_recording()
+                logger.info("Path recording STARTED — drive Train A one full loop")
             logger.info("Draw table boundary again")
         elif key in (ord('m'), ord('M'), ord('p'), ord('P')):
             manual_mode = not manual_mode
@@ -451,11 +536,11 @@ def main():
         elif raw_key in (2490368, 65362):   # Up
             ctrl.set_user_speed(ctrl.user_speed + 1)
             ble.set_speed(ctrl.user_speed)
-            logger.info(f"Speed ↑ {ctrl.user_speed}")
+            logger.info(f"Speed [UP] {ctrl.user_speed}")
         elif raw_key in (2621440, 65364):   # Down
             ctrl.set_user_speed(max(1, ctrl.user_speed - 1))
             ble.set_speed(ctrl.user_speed)
-            logger.info(f"Speed ↓ {ctrl.user_speed}")
+            logger.info(f"Speed [DOWN] {ctrl.user_speed}")
 
     ble.shutdown(); cap.release(); cv2.destroyAllWindows()
     elapsed = int(time.time() - start_time)

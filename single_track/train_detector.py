@@ -87,17 +87,20 @@ class TrackPath:
         return (x, y)
 
     def _save(self):
+        track_file = getattr(config, 'TRACK_PATH_FILE', 'track_path.json')
         pf = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
-            config.TRACK_PATH_FILE)
+            track_file)
         with open(pf, "w") as f:
             json.dump({"points": self._points}, f)
         logger.info(f"Track path saved → {pf}")
 
     def load(self):
+        # getattr fallback in case config.py is not yet updated
+        track_file = getattr(config, 'TRACK_PATH_FILE', 'track_path.json')
         pf = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
-            config.TRACK_PATH_FILE)
+            track_file)
         if not os.path.exists(pf):
             return
         try:
@@ -409,11 +412,11 @@ class DragTracker:
         try:
             with open(mf, "w") as f:
                 json.dump({"rect": [x1, y1, x2, y2]}, f, indent=2)
-            print(f"  ✅ Table mask SAVED → {mf}")
+            print(f"  [OK] Table mask SAVED → {mf}")
             print(f"     Rect: ({x1},{y1}) → ({x2},{y2})")
             logger.info(f"Table mask saved: ({x1},{y1})→({x2},{y2})")
         except Exception as e:
-            print(f"  ❌ Table mask SAVE FAILED: {e}")
+            print(f"  [ERR] Table mask SAVE FAILED: {e}")
             print(f"     Tried to write: {mf}")
             logger.error(f"Table mask save failed: {e}")
 
@@ -435,12 +438,12 @@ class DragTracker:
             cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
             self._table_mask = mask
             self.state       = WAIT_A
-            print(f"  ✅ Table mask LOADED from: {mf}")
+            print(f"  [OK] Table mask LOADED from: {mf}")
             print(f"     Rect: ({x1},{y1}) → ({x2},{y2})")
             print(f"     Press T to redraw it")
             logger.info(f"Table mask loaded: ({x1},{y1})→({x2},{y2})")
         except Exception as e:
-            print(f"  ❌ Table mask LOAD FAILED: {e}")
+            print(f"  [ERR] Table mask LOAD FAILED: {e}")
             logger.warning(f"Table mask load failed: {e}")
 
     def redraw_table(self):

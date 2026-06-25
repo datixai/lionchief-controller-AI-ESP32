@@ -117,7 +117,7 @@ class TrainBLEController:
 
             self._connected   = True
             self.connect_count += 1
-            logger.info(f"✅ Train B connected [{mac}]")
+            logger.info(f"[OK] Train B connected [{mac}]")
 
         except Exception as e:
             logger.error(f"BLE connect failed: {e}")
