@@ -359,6 +359,10 @@ def main():
     manual_mode     = False
     waiting_confirm = False
     auto_paused     = False
+    last_danger_t   = 0.0    # cooldown — DANGER stop sent at most once/second
+    resume_time     = 0.0    # grace period — DANGER suppressed 3s after resume
+    DANGER_COOLDOWN = 1.0    # seconds between emergency stops
+    RESUME_GRACE    = 3.0    # seconds to suppress DANGER after resume
     prev_state      = _tracker.state
     horn_on         = False
     last_ka         = time.time()
@@ -402,8 +406,10 @@ def main():
                     ble.train_b.send_stop_raw()
                     logger.warning("AUTO-PAUSED — tracker lost")
             elif auto_paused:
-                auto_paused = False
-                logger.info("AUTO-RESUMED")
+                auto_paused  = False
+                resume_time  = now    # start grace period — suppress DANGER for 3s
+                ctrl.reset()          # reset PD state so stale gap_rate doesn't trigger
+                logger.info("AUTO-RESUMED — 3s DANGER grace period started")
 
             if manual_mode or auto_paused:
                 spd_b = ble.train_b.current_speed
@@ -412,26 +418,34 @@ def main():
                 speed_b, zone = ctrl.update(eff, a_chasing)
 
                 if zone == Zone.DANGER:
-                    # BOTH trains stop in danger
-                    ble.emergency_stop_both()
+                    # BOTH trains stop — rate limited to 1x per second
+                    # and suppressed for RESUME_GRACE seconds after resume
+                    in_grace = (now - resume_time) < RESUME_GRACE
+                    if not in_grace and (now - last_danger_t) >= DANGER_COOLDOWN:
+                        ble.emergency_stop_both()
+                        last_danger_t = now
                     spd_a = 0
                     spd_b = 0
+
                 elif zone == Zone.ESCAPE:
-                    # Speed up B, slow A by 1
+                    # Speed up B, slow A by 1 step — without touching user_speed
                     if ctrl.should_send_command(speed_b):
                         ble.train_b.set_speed(speed_b)
                         ctrl.command_sent(speed_b)
-                    new_a = max(1, ble.train_a.user_speed - config.ESCAPE_SLOW_A_BY)
-                    if ble.train_a.current_speed != new_a:
-                        ble.train_a.set_speed(new_a)
-                    spd_a = new_a
+                    # Use set_speed_no_save so user_speed is NOT changed
+                    # (prevents runaway slowdown of Train A)
+                    desired_a = max(1, ble.train_a.user_speed
+                                    - config.ESCAPE_SLOW_A_BY)
+                    if ble.train_a.current_speed != desired_a:
+                        ble.train_a.set_speed_no_save(desired_a)
+                    spd_a = desired_a
                     spd_b = speed_b
+
                 else:
                     # Normal: Train A runs freely, Train B gap-controlled
                     if ctrl.should_send_command(speed_b):
                         ble.train_b.set_speed(speed_b)
                         ctrl.command_sent(speed_b)
-                    # Keep Train A at its user speed
                     if ble.train_a.current_speed != ble.train_a.user_speed:
                         ble.train_a.set_speed(ble.train_a.user_speed)
                     spd_a = ble.train_a.current_speed

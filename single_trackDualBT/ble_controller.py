@@ -83,6 +83,13 @@ class SingleTrainBLE:
         self._queue(config.SPEED_CMDS[speed],
                     f"Train{self._label} SPEED {speed}")
 
+    def set_speed_no_save(self, speed: int):
+        """Set speed WITHOUT updating user_speed (used for ESCAPE adjustments)."""
+        speed = max(0, min(7, speed))
+        self.current_speed = speed
+        self._queue(config.SPEED_CMDS[speed],
+                    f"Train{self._label} TEMP {speed}")
+
     def send_stop(self):
         """Collision stop — saves user_speed before stopping."""
         if self.current_speed > 0:
