@@ -289,6 +289,192 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
                         (20,fy+34),cv2.FONT_HERSHEY_SIMPLEX,0.82,col,2)
             break
 
+
+    # ── DASHBOARD single line 44px ────────────────────────────────────
+    dash_y = h - 44
+    dash_ov = display.copy()
+    cv2.rectangle(dash_ov, (0, dash_y), (w, h), (12, 12, 12), -1)
+    cv2.addWeighted(dash_ov, 0.80, display, 0.20, 0, display)
+    cv2.line(display, (0, dash_y), (w, dash_y), (60, 60, 60), 1)
+
+    # Train A left block
+    col_a   = (0, 165, 255)
+    ble_a_c = (0, 200, 60) if ble.connected_a else (60, 60, 200)
+    cv2.circle(display, (10, dash_y + 12), 4, ble_a_c, -1)
+    cv2.putText(display, "A", (18, dash_y + 14),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.36, col_a, 1)
+    spd_a_col = (60, 60, 220) if zone == Zone.DANGER else col_a
+    cv2.putText(display, f"{spd_a}/7", (28, dash_y + 36),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.72, spd_a_col, 2)
+    cv2.line(display, (80, dash_y), (80, h), (50, 50, 50), 1)
+
+    # Train B right block
+    col_b   = (0, 220, 50)
+    ble_b_c = (0, 200, 60) if ble.connected_b else (60, 60, 200)
+    cv2.circle(display, (w - 10, dash_y + 12), 4, ble_b_c, -1)
+    cv2.putText(display, "B", (w - 52, dash_y + 14),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.36, col_b, 1)
+    spd_b_col = (60, 60, 220) if zone == Zone.DANGER else col_b
+    cv2.putText(display, f"{spd_b}/7", (w - 76, dash_y + 36),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.72, spd_b_col, 2)
+    cv2.line(display, (w - 80, dash_y), (w - 80, h), (50, 50, 50), 1)
+
+    # Centre: mode badge + buttons (single row)
+    def _b(x, key, label, kc=(50,50,50), lc=(155,155,155)):
+        kw = max(13, len(key)*6+5); lw = len(label)*5+3; bh = 16
+        cv2.rectangle(display,(x,dash_y+4),(x+kw,dash_y+4+bh),kc,-1)
+        cv2.rectangle(display,(x,dash_y+4),(x+kw,dash_y+4+bh),(70,70,70),1)
+        cv2.putText(display,key,(x+2,dash_y+16),
+                    cv2.FONT_HERSHEY_SIMPLEX,0.28,(225,225,225),1)
+        cv2.rectangle(display,(x+kw,dash_y+4),(x+kw+lw,dash_y+4+bh),(22,22,22),-1)
+        cv2.rectangle(display,(x+kw,dash_y+4),(x+kw+lw,dash_y+4+bh),(50,50,50),1)
+        cv2.putText(display,label,(x+kw+2,dash_y+16),
+                    cv2.FONT_HERSHEY_SIMPLEX,0.26,lc,1)
+        return x+kw+lw+3
+
+    mode_lbl = "MANUAL" if manual_mode else "AUTO"
+    mode_col = (0,190,240) if manual_mode else (0,170,55)
+    x = 84
+    cv2.rectangle(display,(x,dash_y+4),(x+48,dash_y+20),mode_col,-1)
+    cv2.putText(display,mode_lbl,(x+3,dash_y+16),
+                cv2.FONT_HERSHEY_SIMPLEX,0.34,(0,0,0),1)
+    x += 52
+    x = _b(x,"M","Mode",(0,95,125))
+    x = _b(x,"E","StopBoth",(125,0,0),(235,95,95))
+    x = _b(x,"S","StopB",(100,0,0),(195,85,85))
+    x = _b(x,"R","ResB",(0,85,0),(85,205,85))
+    x = _b(x,"A","ReselA",(0,65,115))
+    x = _b(x,"B","ReselB",(0,85,30))
+    x = _b(x,"[","SlwA",(30,65,105))
+    x = _b(x,"]","FstA",(30,65,105))
+    x = _b(x,"1-7","SetB",(50,50,50))
+    x = _b(x,"T","Table",(50,50,50))
+    x = _b(x,"H","Horn",(50,50,50))
+    x = _b(x,"Q","Quit",(70,22,22),(185,110,110))
+
+# ── Main overlay ──────────────────────────────────────────────────
+
+def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
+                 spd_a, spd_b, ble, manual_mode, a_chasing,
+                 conf_a=1.0, conf_b=1.0, ctrl=None):
+    h,w = display.shape[:2]
+    now = time.time()
+    zcol = config.ZONE_COLORS.get(zone,(120,120,120))
+
+    # Table rect
+    draw_table_rect(display, tracker._table_rect)
+
+    # Track path dots
+    if tracker.track_path.has_path:
+        for px,py in tracker.track_path.points[::3]:
+            cv2.circle(display,(int(px),int(py)),2,
+                       (0,200,200) if tracker.track_path.recording
+                       else (60,50,0),-1)
+
+    # Search area circles
+    tracker._tkr_a.draw_search_area(display,(50,50,50))
+    tracker._tkr_b.draw_search_area(display,(50,50,50))
+
+    # Tracking circles
+    draw_tracking_circle(display,pos_a,(0,165,255),"A (front)")
+    draw_tracking_circle(display,pos_b,(0,220, 50),f"B (rear) {spd_b}")
+
+    # Confidence bars
+    if pos_a:
+        draw_confidence_bar(display,pos_a.x+pos_a.radius+10,
+                            pos_a.y-20,conf_a,(0,165,255),"A")
+    if pos_b:
+        draw_confidence_bar(display,pos_b.x+pos_b.radius+10,
+                            pos_b.y-20,conf_b,(0,220,50),"B")
+
+    # Gap line
+    if pos_a and pos_b and dist is not None:
+        cv2.line(display,(pos_a.x,pos_a.y),(pos_b.x,pos_b.y),zcol,1)
+        mx=(pos_a.x+pos_b.x)//2; my=(pos_a.y+pos_b.y)//2
+        rate_s=""
+        if ctrl and abs(ctrl.gap_rate)>0.5:
+            arr="v" if ctrl.gap_rate<0 else "^"
+            rate_s=f" {arr}{abs(ctrl.gap_rate):.0f}px/f"
+        cv2.putText(display,f"{dist:.0f}px | {zone}{rate_s}",
+                    (mx+6,my-6),cv2.FONT_HERSHEY_SIMPLEX,0.52,zcol,2)
+
+    # Live drag
+    if tracker.is_dragging and tracker.drag_start and tracker.drag_end:
+        x1=min(tracker.drag_start[0],tracker.drag_end[0])
+        y1=min(tracker.drag_start[1],tracker.drag_end[1])
+        x2=max(tracker.drag_start[0],tracker.drag_end[0])
+        y2=max(tracker.drag_start[1],tracker.drag_end[1])
+        dc={WAIT_TABLE:(0,200,200),WAIT_A:(0,165,255),WAIT_B:(0,220,50)}
+        dcol=dc.get(tracker.state,(200,200,200))
+        cv2.rectangle(display,(x1,y1),(x2,y2),dcol,2)
+        lbl={WAIT_TABLE:"TABLE",WAIT_A:"Train A",WAIT_B:"Train B"}
+        cv2.putText(display,lbl.get(tracker.state,""),(x1+4,y1+18),
+                    cv2.FONT_HERSHEY_SIMPLEX,0.55,dcol,2)
+
+    # Top status bar
+    if tracker.state in SELECTION_STATES:
+        sc={WAIT_TABLE:(0,200,200),WAIT_A:(0,165,255),WAIT_B:(0,220,50)}
+        col=sc.get(tracker.state,(200,200,200))
+        cv2.rectangle(display,(0,0),(w,52),(25,15,0),-1)
+        cv2.putText(display,tracker.instruction_text(),
+                    (8,28),cv2.FONT_HERSHEY_SIMPLEX,0.65,col,2)
+        cv2.putText(display,"Hold left mouse + drag a box → release",
+                    (8,46),cv2.FONT_HERSHEY_SIMPLEX,0.36,(160,160,160),1)
+    else:
+        if zone==Zone.ESCAPE:        barc=(55,0,55)
+        elif zone==Zone.DANGER:      barc=(0,0,85)
+        elif zone==Zone.SAFE:        barc=(0,52,0)
+        elif manual_mode:            barc=(45,28,0)
+        else:                        barc=(22,22,22)
+        cv2.rectangle(display,(0,0),(w,48),barc,-1)
+
+        if manual_mode:
+            msg  = f"MANUAL — A:[  ] keys spd:{spd_a}   B:arrows/1-7 spd:{spd_b}"
+            mcol = (0,200,255)
+        elif zone==Zone.ESCAPE:
+            msg  = f"A BEHIND B — Train B escaping (B:{spd_b}) A slowing (A:{spd_a})"
+            mcol = (200,80,200)
+        elif zone==Zone.DANGER:
+            msg  = f"DANGER — BOTH TRAINS STOPPED"
+            mcol = (80,80,255)
+        elif not tracker.tracking_a or not tracker.tracking_b:
+            msg  = "Tracker lost — press A or B to re-select"
+            mcol = (0,80,255)
+        else:
+            msgs={Zone.WARNING:f"WARNING — slowing B (spd:{spd_b})",
+                  Zone.CAUTION:f"CAUTION — B spd:{spd_b}",
+                  Zone.SAFE:   f"SAFE — A:{spd_a}  B:{spd_b}",
+                  Zone.FAR:    f"FAR — B catching up (spd:{spd_b})",
+                  Zone.UNKNOWN:f"Not visible — holding"}
+            msg=msgs.get(zone,zone); mcol=zcol
+
+        cv2.putText(display,msg,(8,26),
+                    cv2.FONT_HERSHEY_SIMPLEX,0.62,(255,255,255),2)
+        mode_s="MANUAL" if manual_mode else "AUTO"
+        mode_c=(0,200,255) if manual_mode else (100,220,100)
+        ble_s=(f"A:{'OK' if ble.connected_a else 'wait'} "
+               f"B:{'OK' if ble.connected_b else 'wait'}")
+        cv2.putText(display,
+                    f"[{mode_s}] {ble_s} | "
+                    f"Gap:{f'{dist:.0f}px' if dist is not None else '---'} | "
+                    f"M=mode E=EmergStop T=table L=path A/B=reselect",
+                    (8,44),cv2.FONT_HERSHEY_SIMPLEX,0.34,mode_c,1)
+
+    # Flash
+    flashes=[
+        (tracker.flash_table,"Table saved — select Train A",(0,200,200)),
+        (tracker.flash_a,    "Train A locked — select Train B",(0,165,255)),
+        (tracker.flash_b,    "Train B locked — both tracking!",(0,220,50)),
+    ]
+    for t,msg,col in flashes:
+        if now-t<2.5:
+            fy=h//2-28
+            cv2.rectangle(display,(0,fy),(w,fy+50),(15,15,15),-1)
+            cv2.rectangle(display,(0,fy),(w,fy+50),col,3)
+            cv2.putText(display,f"  [OK]  {msg}",
+                        (20,fy+34),cv2.FONT_HERSHEY_SIMPLEX,0.82,col,2)
+            break
+
     # ══════════════════════════════════════════════════════════
     #  DASHBOARD  —  bottom 100px, semi-transparent
     #  Camera is always visible underneath — trains never hidden
@@ -434,10 +620,13 @@ def main():
     manual_mode     = False
     waiting_confirm = False
     auto_paused     = False
-    last_danger_t   = 0.0    # cooldown — DANGER stop sent at most once/second
-    resume_time     = 0.0    # grace period — DANGER suppressed 3s after resume
-    DANGER_COOLDOWN = 1.0    # seconds between emergency stops
-    RESUME_GRACE    = 3.0    # seconds to suppress DANGER after resume
+    last_danger_t   = 0.0    # cooldown -- DANGER stop sent at most once/second
+    resume_time     = 0.0    # grace period -- DANGER suppressed 5s after resume
+    DANGER_COOLDOWN = 1.5    # seconds between emergency stops
+    RESUME_GRACE    = 5.0    # seconds to suppress DANGER after resume
+    escape_frames   = 0      # consecutive ESCAPE frames before acting
+    ESCAPE_CONFIRM  = 15     # ~0.5s at 30fps before ESCAPE activates
+    last_a_cmd_t    = 0.0    # rate-limit Train A speed commands
     prev_state      = _tracker.state
     horn_on         = False
     last_ka         = time.time()
@@ -503,26 +692,37 @@ def main():
                     spd_b = 0
 
                 elif zone == Zone.ESCAPE:
-                    # Speed up B, slow A by 1 step — without touching user_speed
+                    # Confirm 15 consecutive ESCAPE frames before acting (~0.5s)
+                    # Prevents rapid flip from unstable velocity estimates
+                    escape_frames = min(escape_frames + 1, ESCAPE_CONFIRM + 1)
                     if ctrl.should_send_command(speed_b):
                         ble.train_b.set_speed(speed_b)
                         ctrl.command_sent(speed_b)
-                    # Use set_speed_no_save so user_speed is NOT changed
-                    # (prevents runaway slowdown of Train A)
-                    desired_a = max(1, ble.train_a.user_speed
-                                    - config.ESCAPE_SLOW_A_BY)
-                    if ble.train_a.current_speed != desired_a:
-                        ble.train_a.set_speed_no_save(desired_a)
-                    spd_a = desired_a
+                    if escape_frames >= ESCAPE_CONFIRM:
+                        desired_a = max(1, ble.train_a.user_speed
+                                        - config.ESCAPE_SLOW_A_BY)
+                        if (ble.train_a.current_speed != desired_a
+                                and now - last_a_cmd_t > 1.0):
+                            ble.train_a.set_speed_no_save(desired_a)
+                            last_a_cmd_t = now
+                    else:
+                        if (ble.train_a.current_speed != ble.train_a.user_speed
+                                and now - last_a_cmd_t > 0.5):
+                            ble.train_a.set_speed(ble.train_a.user_speed)
+                            last_a_cmd_t = now
+                    spd_a = ble.train_a.current_speed
                     spd_b = speed_b
 
                 else:
                     # Normal: Train A runs freely, Train B gap-controlled
+                    escape_frames = 0
                     if ctrl.should_send_command(speed_b):
                         ble.train_b.set_speed(speed_b)
                         ctrl.command_sent(speed_b)
-                    if ble.train_a.current_speed != ble.train_a.user_speed:
+                    if (ble.train_a.current_speed != ble.train_a.user_speed
+                            and now - last_a_cmd_t > 0.5):
                         ble.train_a.set_speed(ble.train_a.user_speed)
+                        last_a_cmd_t = now
                     spd_a = ble.train_a.current_speed
                     spd_b = speed_b
         else:

@@ -1,4 +1,4 @@
-# train_detector.py — v10.0 with confidence + track path learning
+# train_detector.py -- v10.0 with confidence + track path learning
 # Harry Locomotive Project 3 | Datix AI | June 2026
 
 import cv2
@@ -62,7 +62,7 @@ class TrackPath:
         self.recording = False
         if self.has_path:
             self._save()
-        logger.info(f"Track path recording stopped — {len(self._points)} pts")
+        logger.info(f"Track path recording stopped -- {len(self._points)} pts")
 
     def record(self, x: int, y: int):
         if not self.recording:
@@ -108,7 +108,7 @@ class TrackPath:
                 d = json.load(f)
             self._points = [tuple(p) for p in d["points"]]
             self._loaded = True
-            logger.info(f"Track path loaded — {len(self._points)} pts")
+            logger.info(f"Track path loaded -- {len(self._points)} pts")
         except Exception as e:
             logger.warning(f"Track path load failed: {e}")
 
@@ -156,9 +156,9 @@ class _TrainTracker:
         if not self._active:
             return 0.0
         if self._locked:
-            return 0.65   # stopped & confirmed — medium confidence
+            return 0.65   # stopped & confirmed -- medium confidence
         if self._no_blob_ct == 0:
-            # Fresh blob — confidence based on consecutive fresh frames
+            # Fresh blob -- confidence based on consecutive fresh frames
             return min(1.0, 0.7 + self._fresh_blobs * 0.03)
         # Coasting: decays with frames without blob
         return max(0.1, 1.0 - self._no_blob_ct / 30.0)
@@ -181,7 +181,7 @@ class _TrainTracker:
         if gray_frame is not None:
             self._store_ref(gray_frame, cx, cy)
             logger.info(
-                f"[{self.label}] init ({cx},{cy}) — ref patch stored")
+                f"[{self.label}] init ({cx},{cy}) -- ref patch stored")
         else:
             logger.info(f"[{self.label}] init ({cx},{cy})")
 
@@ -197,7 +197,7 @@ class _TrainTracker:
             return
 
         if blob is not None:
-            # ── Blob found — train is MOVING ──────────────────────
+            # ── Blob found -- train is MOVING ──────────────────────
             cx, cy, area = blob["cx"], blob["cy"], blob["area"]
             if track_path and track_path.has_path:
                 cx, cy = track_path.snap(cx, cy)
@@ -214,7 +214,7 @@ class _TrainTracker:
 
             if self._no_blob_ct <= self._INITIAL_HOLD_FRAMES:
                 # HOLD PHASE: just selected or recently seen.
-                # Train may be stationary (MOG2 background) — stay put.
+                # Train may be stationary (MOG2 background) -- stay put.
                 # This prevents losing the tracker in the first seconds.
                 self._active = True
                 self._locked = False
@@ -245,7 +245,7 @@ class _TrainTracker:
                     self._vy *= 0.85
                     self._active = True
                 else:
-                    # Truly lost — mark inactive
+                    # Truly lost -- mark inactive
                     self._active = False
 
     def _update(self, cx, cy, area):
@@ -368,6 +368,12 @@ class DragTracker:
         self._latest_gray = None   # used to pass gray to init()
 
         self.state       = WAIT_TABLE
+
+        # Safety: trackers always start uninitialized.
+        # Positions can ONLY be set by user dragging a box.
+        # No file loading, no auto-initialization.
+        assert not self._tkr_a.initialized, "tracker A should not be initialized at start"
+        assert not self._tkr_b.initialized, "tracker B should not be initialized at start"
         self.drag_start  = None
         self.drag_end    = None
         self.is_dragging = False
@@ -436,7 +442,7 @@ class DragTracker:
         cv2.rectangle(mask, (x1, y1), (x2, y2), 255, -1)
         self._table_mask = mask
 
-        # Save to file — always overwrite, always show path
+        # Save to file -- always overwrite, always show path
         mf = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
             config.TABLE_MASK_FILE)
@@ -539,11 +545,11 @@ class DragTracker:
 
     def instruction_text(self) -> str:
         if self.state==WAIT_TABLE:
-            return "STEP 1 — DRAG a box around the TABLE (whole track area)"
+            return "STEP 1 -- DRAG a box around the TABLE (whole track area)"
         elif self.state==WAIT_A:
-            return "STEP 2 — DRAG a box around TRAIN A (front train)"
+            return "STEP 2 -- DRAG a box around TRAIN A (front train)"
         elif self.state==WAIT_B:
-            return "STEP 3 — DRAG a box around TRAIN B (rear BLE train)"
+            return "STEP 3 -- DRAG a box around TRAIN B (rear BLE train)"
         la=("LOCKED" if self._tkr_a.is_locked else
             f"OK {self._tkr_a.confidence:.0%}" if self._tkr_a.active else "LOST")
         lb=("LOCKED" if self._tkr_b.is_locked else
