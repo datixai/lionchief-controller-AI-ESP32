@@ -290,17 +290,20 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
             break
 
     # ══════════════════════════════════════════════════════════
-    #  DASHBOARD  —  bottom 100px
+    #  DASHBOARD  —  bottom 100px, semi-transparent
+    #  Camera is always visible underneath — trains never hidden
     # ══════════════════════════════════════════════════════════
     dash_y = h - 100
-    cv2.rectangle(display, (0, dash_y), (w, h), (18, 18, 18), -1)
-    cv2.line(display, (0, dash_y), (w, dash_y), (50, 50, 50), 1)
+    # Semi-transparent dark overlay so camera shows through
+    dash_overlay = display.copy()
+    cv2.rectangle(dash_overlay, (0, dash_y), (w, h), (15, 15, 15), -1)
+    cv2.addWeighted(dash_overlay, 0.72, display, 0.28, 0, display)
+    cv2.line(display, (0, dash_y), (w, dash_y), (70, 70, 70), 1)
 
     # ── Train A speed block (left) ────────────────────────────
     col_a   = (0, 165, 255)
     ble_a_c = (0, 200, 60) if ble.connected_a else (60, 60, 200)
-    cv2.rectangle(display, (0, dash_y), (170, h), (24, 24, 24), -1)
-    cv2.line(display, (170, dash_y), (170, h), (50, 50, 50), 1)
+    cv2.line(display, (170, dash_y), (170, h), (55, 55, 55), 1)
     # BLE dot
     cv2.circle(display, (14, dash_y + 14), 5, ble_a_c, -1)
     cv2.putText(display, "TRAIN  A",
@@ -321,8 +324,7 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
     # ── Train B speed block (right) ───────────────────────────
     col_b   = (0, 220, 50)
     ble_b_c = (0, 200, 60) if ble.connected_b else (60, 60, 200)
-    cv2.rectangle(display, (w - 170, dash_y), (w, h), (24, 24, 24), -1)
-    cv2.line(display, (w - 170, dash_y), (w - 170, h), (50, 50, 50), 1)
+    cv2.line(display, (w - 170, dash_y), (w - 170, h), (55, 55, 55), 1)
     cv2.circle(display, (w - 14, dash_y + 14), 5, ble_b_c, -1)
     cv2.putText(display, "TRAIN  B",
                 (w - 150, dash_y + 18),
