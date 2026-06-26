@@ -545,11 +545,11 @@ class DragTracker:
 
     def instruction_text(self) -> str:
         if self.state==WAIT_TABLE:
-            return "STEP 1 -- DRAG a box around the TABLE (whole track area)"
+            return "STEP 1 -- DRAG a box around the TABLE  (whole track oval)"
         elif self.state==WAIT_A:
-            return "STEP 2 -- DRAG a box around TRAIN A (front train)"
+            return "STEP 2 -- DRAG a box around BLACK Train  (front leader)"
         elif self.state==WAIT_B:
-            return "STEP 3 -- DRAG a box around TRAIN B (rear BLE train)"
+            return "STEP 3 -- DRAG a box around ORANGE Train  (rear follower)"
         la=("LOCKED" if self._tkr_a.is_locked else
             f"OK {self._tkr_a.confidence:.0%}" if self._tkr_a.active else "LOST")
         lb=("LOCKED" if self._tkr_b.is_locked else

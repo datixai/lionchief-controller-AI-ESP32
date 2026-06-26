@@ -160,9 +160,9 @@ def draw_confirm_overlay(display):
     cv2.rectangle(display,(bx,by),(bx+bw,by+bh),(0,220,50),2)
     cv2.putText(display,"Both trains selected! Start now?",
                 (bx+16,by+38),cv2.FONT_HERSHEY_SIMPLEX,0.72,(255,255,255),2)
-    cv2.putText(display,"Y = Auto mode (gap detection controls Train B)",
+    cv2.putText(display,"Y = Auto  (gap detection controls ORANGE Train)",
                 (bx+40,by+78),cv2.FONT_HERSHEY_SIMPLEX,0.60,(0,220,50),2)
-    cv2.putText(display,"N = Manual mode (you control both trains)",
+    cv2.putText(display,"N = Manual (you control both trains)",
                 (bx+40,by+118),cv2.FONT_HERSHEY_SIMPLEX,0.60,(0,200,255),2)
 
 
@@ -190,16 +190,16 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
     tracker._tkr_b.draw_search_area(display,(50,50,50))
 
     # Tracking circles
-    draw_tracking_circle(display,pos_a,(0,165,255),"A (front)")
-    draw_tracking_circle(display,pos_b,(0,220, 50),f"B (rear) {spd_b}")
+    draw_tracking_circle(display,pos_a,(210,210,210),"BLACK")
+    draw_tracking_circle(display,pos_b,(0,165,255),f"ORANGE {spd_b}")
 
     # Confidence bars
     if pos_a:
         draw_confidence_bar(display,pos_a.x+pos_a.radius+10,
-                            pos_a.y-20,conf_a,(0,165,255),"A")
+                            pos_a.y-20,conf_a,(210,210,210),"BLK")
     if pos_b:
         draw_confidence_bar(display,pos_b.x+pos_b.radius+10,
-                            pos_b.y-20,conf_b,(0,220,50),"B")
+                            pos_b.y-20,conf_b,(0,165,255),"ORG")
 
     # Gap line
     if pos_a and pos_b and dist is not None:
@@ -218,16 +218,16 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
         y1=min(tracker.drag_start[1],tracker.drag_end[1])
         x2=max(tracker.drag_start[0],tracker.drag_end[0])
         y2=max(tracker.drag_start[1],tracker.drag_end[1])
-        dc={WAIT_TABLE:(0,200,200),WAIT_A:(0,165,255),WAIT_B:(0,220,50)}
+        dc={WAIT_TABLE:(0,200,200),WAIT_A:(210,210,210),WAIT_B:(0,165,255)}
         dcol=dc.get(tracker.state,(200,200,200))
         cv2.rectangle(display,(x1,y1),(x2,y2),dcol,2)
-        lbl={WAIT_TABLE:"TABLE",WAIT_A:"Train A",WAIT_B:"Train B"}
+        lbl={WAIT_TABLE:"TABLE",WAIT_A:"BLACK Train",WAIT_B:"ORANGE Train"}
         cv2.putText(display,lbl.get(tracker.state,""),(x1+4,y1+18),
                     cv2.FONT_HERSHEY_SIMPLEX,0.55,dcol,2)
 
     # Top status bar
     if tracker.state in SELECTION_STATES:
-        sc={WAIT_TABLE:(0,200,200),WAIT_A:(0,165,255),WAIT_B:(0,220,50)}
+        sc={WAIT_TABLE:(0,200,200),WAIT_A:(210,210,210),WAIT_B:(0,165,255)}
         col=sc.get(tracker.state,(200,200,200))
         cv2.rectangle(display,(0,0),(w,52),(25,15,0),-1)
         cv2.putText(display,tracker.instruction_text(),
@@ -266,8 +266,8 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
                     cv2.FONT_HERSHEY_SIMPLEX,0.62,(255,255,255),2)
         mode_s="MANUAL" if manual_mode else "AUTO"
         mode_c=(0,200,255) if manual_mode else (100,220,100)
-        ble_s=(f"A:{'OK' if ble.connected_a else 'wait'} "
-               f"B:{'OK' if ble.connected_b else 'wait'}")
+        ble_s=(f"BLK:{'OK' if ble.connected_a else 'wait'} "
+               f"ORG:{'OK' if ble.connected_b else 'wait'}")
         cv2.putText(display,
                     f"[{mode_s}] {ble_s} | "
                     f"Gap:{f'{dist:.0f}px' if dist is not None else '---'} | "
@@ -314,16 +314,16 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
     tracker._tkr_b.draw_search_area(display,(50,50,50))
 
     # Tracking circles
-    draw_tracking_circle(display,pos_a,(0,165,255),"A (front)")
-    draw_tracking_circle(display,pos_b,(0,220, 50),f"B (rear) {spd_b}")
+    draw_tracking_circle(display,pos_a,(210,210,210),"BLACK")
+    draw_tracking_circle(display,pos_b,(0,165,255),f"ORANGE {spd_b}")
 
     # Confidence bars
     if pos_a:
         draw_confidence_bar(display,pos_a.x+pos_a.radius+10,
-                            pos_a.y-20,conf_a,(0,165,255),"A")
+                            pos_a.y-20,conf_a,(210,210,210),"BLK")
     if pos_b:
         draw_confidence_bar(display,pos_b.x+pos_b.radius+10,
-                            pos_b.y-20,conf_b,(0,220,50),"B")
+                            pos_b.y-20,conf_b,(0,165,255),"ORG")
 
     # Gap line
     if pos_a and pos_b and dist is not None:
@@ -342,16 +342,16 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
         y1=min(tracker.drag_start[1],tracker.drag_end[1])
         x2=max(tracker.drag_start[0],tracker.drag_end[0])
         y2=max(tracker.drag_start[1],tracker.drag_end[1])
-        dc={WAIT_TABLE:(0,200,200),WAIT_A:(0,165,255),WAIT_B:(0,220,50)}
+        dc={WAIT_TABLE:(0,200,200),WAIT_A:(210,210,210),WAIT_B:(0,165,255)}
         dcol=dc.get(tracker.state,(200,200,200))
         cv2.rectangle(display,(x1,y1),(x2,y2),dcol,2)
-        lbl={WAIT_TABLE:"TABLE",WAIT_A:"Train A",WAIT_B:"Train B"}
+        lbl={WAIT_TABLE:"TABLE",WAIT_A:"BLACK Train",WAIT_B:"ORANGE Train"}
         cv2.putText(display,lbl.get(tracker.state,""),(x1+4,y1+18),
                     cv2.FONT_HERSHEY_SIMPLEX,0.55,dcol,2)
 
     # Top status bar
     if tracker.state in SELECTION_STATES:
-        sc={WAIT_TABLE:(0,200,200),WAIT_A:(0,165,255),WAIT_B:(0,220,50)}
+        sc={WAIT_TABLE:(0,200,200),WAIT_A:(210,210,210),WAIT_B:(0,165,255)}
         col=sc.get(tracker.state,(200,200,200))
         cv2.rectangle(display,(0,0),(w,52),(25,15,0),-1)
         cv2.putText(display,tracker.instruction_text(),
@@ -390,8 +390,8 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
                     cv2.FONT_HERSHEY_SIMPLEX,0.62,(255,255,255),2)
         mode_s="MANUAL" if manual_mode else "AUTO"
         mode_c=(0,200,255) if manual_mode else (100,220,100)
-        ble_s=(f"A:{'OK' if ble.connected_a else 'wait'} "
-               f"B:{'OK' if ble.connected_b else 'wait'}")
+        ble_s=(f"BLK:{'OK' if ble.connected_a else 'wait'} "
+               f"ORG:{'OK' if ble.connected_b else 'wait'}")
         cv2.putText(display,
                     f"[{mode_s}] {ble_s} | "
                     f"Gap:{f'{dist:.0f}px' if dist is not None else '---'} | "
@@ -422,7 +422,7 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
     cv2.line(display, (0, dash_y), (w, dash_y), (60, 60, 60), 1)
 
     # Train A — left
-    _ca = (0, 165, 255)
+    _ca = (210, 210, 210)
     _da = (60, 60, 220) if zone == Zone.DANGER else _ca
     cv2.circle(display, (10, dash_y+13), 4,
                (0,200,60) if ble.connected_a else (60,60,200), -1)
@@ -433,7 +433,7 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
     cv2.line(display, (78, dash_y), (78, h), (50,50,50), 1)
 
     # Train B — right
-    _cb = (0, 220, 50)
+    _cb = (0, 165, 255)
     _db = (60, 60, 220) if zone == Zone.DANGER else _cb
     cv2.circle(display, (w-10, dash_y+13), 4,
                (0,200,60) if ble.connected_b else (60,60,200), -1)
@@ -466,12 +466,12 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
     bx += 43
     bx = _bt(bx,"M","Mode",(0,90,120))
     bx = _bt(bx,"E","StopAll",(120,0,0),(230,90,90))
-    bx = _bt(bx,"S","StopB",(95,0,0),(190,80,80))
-    bx = _bt(bx,"R","ResB",(0,80,0),(80,195,80))
-    bx = _bt(bx,"A","ReselA",(0,60,110))
-    bx = _bt(bx,"B","ReselB",(0,80,28))
-    bx = _bt(bx,"[","SlwA",(28,60,100))
-    bx = _bt(bx,"]","FstA",(28,60,100))
+    bx = _bt(bx,"S","StopORG",(95,0,0),(190,80,80))
+    bx = _bt(bx,"R","ResORG",(0,80,0),(80,195,80))
+    bx = _bt(bx,"A","ReselBLK",(0,60,110))
+    bx = _bt(bx,"B","ReselORG",(0,80,28))
+    bx = _bt(bx,"[","SlwBLK",(28,60,100))
+    bx = _bt(bx,"]","FstBLK",(28,60,100))
     bx = _bt(bx,"1-7","SetB")
     bx = _bt(bx,"^v","SpdB")
     bx = _bt(bx,"T","Table")
