@@ -232,7 +232,7 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
         cv2.rectangle(display,(0,0),(w,52),(25,15,0),-1)
         cv2.putText(display,tracker.instruction_text(),
                     (8,28),cv2.FONT_HERSHEY_SIMPLEX,0.65,col,2)
-        cv2.putText(display,"Hold left mouse + drag a box → release",
+        cv2.putText(display,"Hold left mouse + drag a box, then release",
                     (8,46),cv2.FONT_HERSHEY_SIMPLEX,0.36,(160,160,160),1)
     else:
         if zone==Zone.ESCAPE:        barc=(55,0,55)
@@ -289,68 +289,6 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
                         (20,fy+34),cv2.FONT_HERSHEY_SIMPLEX,0.82,col,2)
             break
 
-
-    # ── DASHBOARD single line 44px ────────────────────────────────────
-    dash_y = h - 44
-    dash_ov = display.copy()
-    cv2.rectangle(dash_ov, (0, dash_y), (w, h), (12, 12, 12), -1)
-    cv2.addWeighted(dash_ov, 0.80, display, 0.20, 0, display)
-    cv2.line(display, (0, dash_y), (w, dash_y), (60, 60, 60), 1)
-
-    # Train A left block
-    col_a   = (0, 165, 255)
-    ble_a_c = (0, 200, 60) if ble.connected_a else (60, 60, 200)
-    cv2.circle(display, (10, dash_y + 12), 4, ble_a_c, -1)
-    cv2.putText(display, "A", (18, dash_y + 14),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.36, col_a, 1)
-    spd_a_col = (60, 60, 220) if zone == Zone.DANGER else col_a
-    cv2.putText(display, f"{spd_a}/7", (28, dash_y + 36),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.72, spd_a_col, 2)
-    cv2.line(display, (80, dash_y), (80, h), (50, 50, 50), 1)
-
-    # Train B right block
-    col_b   = (0, 220, 50)
-    ble_b_c = (0, 200, 60) if ble.connected_b else (60, 60, 200)
-    cv2.circle(display, (w - 10, dash_y + 12), 4, ble_b_c, -1)
-    cv2.putText(display, "B", (w - 52, dash_y + 14),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.36, col_b, 1)
-    spd_b_col = (60, 60, 220) if zone == Zone.DANGER else col_b
-    cv2.putText(display, f"{spd_b}/7", (w - 76, dash_y + 36),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.72, spd_b_col, 2)
-    cv2.line(display, (w - 80, dash_y), (w - 80, h), (50, 50, 50), 1)
-
-    # Centre: mode badge + buttons (single row)
-    def _b(x, key, label, kc=(50,50,50), lc=(155,155,155)):
-        kw = max(13, len(key)*6+5); lw = len(label)*5+3; bh = 16
-        cv2.rectangle(display,(x,dash_y+4),(x+kw,dash_y+4+bh),kc,-1)
-        cv2.rectangle(display,(x,dash_y+4),(x+kw,dash_y+4+bh),(70,70,70),1)
-        cv2.putText(display,key,(x+2,dash_y+16),
-                    cv2.FONT_HERSHEY_SIMPLEX,0.28,(225,225,225),1)
-        cv2.rectangle(display,(x+kw,dash_y+4),(x+kw+lw,dash_y+4+bh),(22,22,22),-1)
-        cv2.rectangle(display,(x+kw,dash_y+4),(x+kw+lw,dash_y+4+bh),(50,50,50),1)
-        cv2.putText(display,label,(x+kw+2,dash_y+16),
-                    cv2.FONT_HERSHEY_SIMPLEX,0.26,lc,1)
-        return x+kw+lw+3
-
-    mode_lbl = "MANUAL" if manual_mode else "AUTO"
-    mode_col = (0,190,240) if manual_mode else (0,170,55)
-    x = 84
-    cv2.rectangle(display,(x,dash_y+4),(x+48,dash_y+20),mode_col,-1)
-    cv2.putText(display,mode_lbl,(x+3,dash_y+16),
-                cv2.FONT_HERSHEY_SIMPLEX,0.34,(0,0,0),1)
-    x += 52
-    x = _b(x,"M","Mode",(0,95,125))
-    x = _b(x,"E","StopBoth",(125,0,0),(235,95,95))
-    x = _b(x,"S","StopB",(100,0,0),(195,85,85))
-    x = _b(x,"R","ResB",(0,85,0),(85,205,85))
-    x = _b(x,"A","ReselA",(0,65,115))
-    x = _b(x,"B","ReselB",(0,85,30))
-    x = _b(x,"[","SlwA",(30,65,105))
-    x = _b(x,"]","FstA",(30,65,105))
-    x = _b(x,"1-7","SetB",(50,50,50))
-    x = _b(x,"T","Table",(50,50,50))
-    x = _b(x,"H","Horn",(50,50,50))
-    x = _b(x,"Q","Quit",(70,22,22),(185,110,110))
 
 # ── Main overlay ──────────────────────────────────────────────────
 
@@ -418,7 +356,7 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
         cv2.rectangle(display,(0,0),(w,52),(25,15,0),-1)
         cv2.putText(display,tracker.instruction_text(),
                     (8,28),cv2.FONT_HERSHEY_SIMPLEX,0.65,col,2)
-        cv2.putText(display,"Hold left mouse + drag a box → release",
+        cv2.putText(display,"Hold left mouse + drag a box, then release",
                     (8,46),cv2.FONT_HERSHEY_SIMPLEX,0.36,(160,160,160),1)
     else:
         if zone==Zone.ESCAPE:        barc=(55,0,55)
@@ -475,109 +413,70 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
                         (20,fy+34),cv2.FONT_HERSHEY_SIMPLEX,0.82,col,2)
             break
 
-    # ══════════════════════════════════════════════════════════
-    #  DASHBOARD  —  bottom 100px, semi-transparent
-    #  Camera is always visible underneath — trains never hidden
-    # ══════════════════════════════════════════════════════════
-    dash_y = h - 100
-    # Semi-transparent dark overlay so camera shows through
-    dash_overlay = display.copy()
-    cv2.rectangle(dash_overlay, (0, dash_y), (w, h), (15, 15, 15), -1)
-    cv2.addWeighted(dash_overlay, 0.72, display, 0.28, 0, display)
-    cv2.line(display, (0, dash_y), (w, dash_y), (70, 70, 70), 1)
 
-    # ── Train A speed block (left) ────────────────────────────
-    col_a   = (0, 165, 255)
-    ble_a_c = (0, 200, 60) if ble.connected_a else (60, 60, 200)
-    cv2.line(display, (170, dash_y), (170, h), (55, 55, 55), 1)
-    # BLE dot
-    cv2.circle(display, (14, dash_y + 14), 5, ble_a_c, -1)
-    cv2.putText(display, "TRAIN  A",
-                (24, dash_y + 18),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.42, col_a, 1)
-    # Large speed number
-    spd_a_col = (0, 60, 200) if zone == Zone.DANGER else col_a
-    cv2.putText(display, str(spd_a),
-                (18, dash_y + 72),
-                cv2.FONT_HERSHEY_SIMPLEX, 2.2, spd_a_col, 3)
-    cv2.putText(display, "/ 7",
-                (90, dash_y + 72),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (80, 80, 80), 1)
-    cv2.putText(display, "[  faster    ]  slower",
-                (8, dash_y + 92),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.30, (90, 90, 90), 1)
+    # ── DASHBOARD — 44px single line, semi-transparent ───────────────
+    dash_y = h - 44
+    _ov = display.copy()
+    cv2.rectangle(_ov, (0, dash_y), (w, h), (12, 12, 12), -1)
+    cv2.addWeighted(_ov, 0.80, display, 0.20, 0, display)
+    cv2.line(display, (0, dash_y), (w, dash_y), (60, 60, 60), 1)
 
-    # ── Train B speed block (right) ───────────────────────────
-    col_b   = (0, 220, 50)
-    ble_b_c = (0, 200, 60) if ble.connected_b else (60, 60, 200)
-    cv2.line(display, (w - 170, dash_y), (w - 170, h), (55, 55, 55), 1)
-    cv2.circle(display, (w - 14, dash_y + 14), 5, ble_b_c, -1)
-    cv2.putText(display, "TRAIN  B",
-                (w - 150, dash_y + 18),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.42, col_b, 1)
-    spd_b_col = (0, 60, 200) if zone == Zone.DANGER else col_b
-    cv2.putText(display, str(spd_b),
-                (w - 152, dash_y + 72),
-                cv2.FONT_HERSHEY_SIMPLEX, 2.2, spd_b_col, 3)
-    cv2.putText(display, "/ 7",
-                (w - 80, dash_y + 72),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (80, 80, 80), 1)
-    cv2.putText(display, "1-7 keys  /  Arrow Up  Down",
-                (w - 168, dash_y + 92),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.30, (90, 90, 90), 1)
+    # Train A — left
+    _ca = (0, 165, 255)
+    _da = (60, 60, 220) if zone == Zone.DANGER else _ca
+    cv2.circle(display, (10, dash_y+13), 4,
+               (0,200,60) if ble.connected_a else (60,60,200), -1)
+    cv2.putText(display, f"A {spd_a}/7", (18, dash_y+20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.50, _da, 1)
+    cv2.putText(display, "[ ]", (18, dash_y+36),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.28, (80,80,80), 1)
+    cv2.line(display, (78, dash_y), (78, h), (50,50,50), 1)
 
-    # ── Mode badge (centre top) ───────────────────────────────
-    mode_lbl = "MANUAL" if manual_mode else "AUTO"
-    mode_col = (0, 200, 255) if manual_mode else (0, 180, 60)
-    mx = w // 2
-    cv2.rectangle(display, (mx - 42, dash_y + 4),
-                  (mx + 42, dash_y + 24), mode_col, -1)
-    cv2.putText(display, mode_lbl,
-                (mx - 34, dash_y + 19),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 0, 0), 2)
+    # Train B — right
+    _cb = (0, 220, 50)
+    _db = (60, 60, 220) if zone == Zone.DANGER else _cb
+    cv2.circle(display, (w-10, dash_y+13), 4,
+               (0,200,60) if ble.connected_b else (60,60,200), -1)
+    cv2.putText(display, f"B {spd_b}/7", (w-78, dash_y+20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.50, _db, 1)
+    cv2.putText(display, "1-7", (w-78, dash_y+36),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.28, (80,80,80), 1)
+    cv2.line(display, (w-82, dash_y), (w-82, h), (50,50,50), 1)
 
-    # ── Command buttons (centre panel) ────────────────────────
-    # Helper: draw one key button, return next x
-    def _btn(x, y, key, label, kc=(55, 55, 55), lc=(170, 170, 170)):
-        kw = max(20, len(key) * 7 + 8)
-        lw = len(label) * 6 + 6
-        bh = 20
-        # key box
-        cv2.rectangle(display, (x, y), (x + kw, y + bh), kc, -1)
-        cv2.rectangle(display, (x, y), (x + kw, y + bh), (80, 80, 80), 1)
-        cv2.putText(display, key, (x + 4, y + 14),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.36, (230, 230, 230), 1)
-        # label box
-        cv2.rectangle(display, (x + kw, y), (x + kw + lw, y + bh),
-                      (30, 30, 30), -1)
-        cv2.rectangle(display, (x + kw, y), (x + kw + lw, y + bh),
-                      (55, 55, 55), 1)
-        cv2.putText(display, label, (x + kw + 3, y + 14),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.33, lc, 1)
-        return x + kw + lw + 5
+    # Centre — mode + all buttons in ONE row
+    def _bt(bx, key, lbl, kc=(48,48,48), lc=(150,150,150)):
+        kw = max(12, len(key)*6+4); lw = len(lbl)*5+3; bh = 15
+        cy2 = dash_y + 6
+        cv2.rectangle(display,(bx,cy2),(bx+kw,cy2+bh),kc,-1)
+        cv2.rectangle(display,(bx,cy2),(bx+kw,cy2+bh),(68,68,68),1)
+        cv2.putText(display,key,(bx+2,cy2+11),
+                    cv2.FONT_HERSHEY_SIMPLEX,0.26,(220,220,220),1)
+        cv2.rectangle(display,(bx+kw,cy2),(bx+kw+lw,cy2+bh),(20,20,20),-1)
+        cv2.rectangle(display,(bx+kw,cy2),(bx+kw+lw,cy2+bh),(48,48,48),1)
+        cv2.putText(display,lbl,(bx+kw+2,cy2+11),
+                    cv2.FONT_HERSHEY_SIMPLEX,0.25,lc,1)
+        return bx+kw+lw+2
 
-    # Row 1 — top row of buttons
-    r1y = dash_y + 32
-    x = 178
-    x = _btn(x, r1y, "M",   "Mode",     (0, 120, 160))
-    x = _btn(x, r1y, "E",   "Stop Both",(140, 0, 0),  (255, 120, 120))
-    x = _btn(x, r1y, "S",   "Stop B",   (120, 0, 0),  (200, 100, 100))
-    x = _btn(x, r1y, "R",   "Resume B", (0, 100, 0),  (100, 220, 100))
-    x = _btn(x, r1y, "A",   "Resel A",  (0, 80, 140))
-    x = _btn(x, r1y, "B",   "Resel B",  (0, 100, 40))
-
-    # Row 2 — bottom row of buttons
-    r2y = dash_y + 58
-    x = 178
-    x = _btn(x, r2y, "[",   "Slow A",   (40, 80, 120))
-    x = _btn(x, r2y, "]",   "Fast A",   (40, 80, 120))
-    x = _btn(x, r2y, "1-7", "Set B Spd",(60, 60, 60))
-    x = _btn(x, r2y, "^v",  "B Speed",  (60, 60, 60))
-    x = _btn(x, r2y, "T",   "Table",    (60, 60, 60))
-    x = _btn(x, r2y, "H",   "Horn",     (60, 60, 60))
-    x = _btn(x, r2y, "K",   "Path",     (60, 60, 60))
-    x = _btn(x, r2y, "Q",   "Quit",     (80, 30, 30), (200, 130, 130))
-
+    _ml = "MAN" if manual_mode else "AUTO"
+    _mc = (0,185,235) if manual_mode else (0,165,50)
+    bx = 82
+    cv2.rectangle(display,(bx,dash_y+6),(bx+40,dash_y+21),_mc,-1)
+    cv2.putText(display,_ml,(bx+3,dash_y+17),
+                cv2.FONT_HERSHEY_SIMPLEX,0.31,(0,0,0),1)
+    bx += 43
+    bx = _bt(bx,"M","Mode",(0,90,120))
+    bx = _bt(bx,"E","StopAll",(120,0,0),(230,90,90))
+    bx = _bt(bx,"S","StopB",(95,0,0),(190,80,80))
+    bx = _bt(bx,"R","ResB",(0,80,0),(80,195,80))
+    bx = _bt(bx,"A","ReselA",(0,60,110))
+    bx = _bt(bx,"B","ReselB",(0,80,28))
+    bx = _bt(bx,"[","SlwA",(28,60,100))
+    bx = _bt(bx,"]","FstA",(28,60,100))
+    bx = _bt(bx,"1-7","SetB")
+    bx = _bt(bx,"^v","SpdB")
+    bx = _bt(bx,"T","Table")
+    bx = _bt(bx,"H","Horn")
+    bx = _bt(bx,"Q","Quit",(68,20,20),(180,105,105))
 
 # ── Main ──────────────────────────────────────────────────────────
 
@@ -686,9 +585,18 @@ def main():
                     # and suppressed for RESUME_GRACE seconds after resume
                     in_grace = (now - resume_time) < RESUME_GRACE
                     if not in_grace and (now - last_danger_t) >= DANGER_COOLDOWN:
-                        ble.emergency_stop_both()
+                        # Only stop Train B — Train A must keep moving forward
+                        # so the gap opens. Stopping both = permanent deadlock.
+                        # Only use emergency_stop_both() in true collision.
+                        ble.train_b.send_stop_raw()
                         last_danger_t = now
-                    spd_a = 0
+                        logger.warning("DANGER -- Train B stopped, A continues")
+                    # Keep Train A running — it opens the gap
+                    if (ble.train_a.current_speed != ble.train_a.user_speed
+                            and now - last_a_cmd_t > 0.5):
+                        ble.train_a.set_speed(ble.train_a.user_speed)
+                        last_a_cmd_t = now
+                    spd_a = ble.train_a.current_speed
                     spd_b = 0
 
                 elif zone == Zone.ESCAPE:
