@@ -289,33 +289,106 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
                         (20,fy+34),cv2.FONT_HERSHEY_SIMPLEX,0.82,col,2)
             break
 
-    # Speed panels — one per train
-    # Train A panel (right)
-    ax=w-260; ay=h-90
-    cv2.rectangle(display,(ax,ay),(ax+120,h),(28,28,28),-1)
-    cv2.putText(display,"TRAIN A",(ax+18,ay+16),
-                cv2.FONT_HERSHEY_SIMPLEX,0.38,(0,165,255),1)
-    cv2.putText(display,str(spd_a),(ax+28,ay+60),
-                cv2.FONT_HERSHEY_SIMPLEX,1.9,(0,165,255),3)
-    cv2.putText(display,"[  ]",(ax+18,ay+78),
-                cv2.FONT_HERSHEY_SIMPLEX,0.35,(100,100,100),1)
+    # ══════════════════════════════════════════════════════════
+    #  DASHBOARD  —  bottom 100px
+    # ══════════════════════════════════════════════════════════
+    dash_y = h - 100
+    cv2.rectangle(display, (0, dash_y), (w, h), (18, 18, 18), -1)
+    cv2.line(display, (0, dash_y), (w, dash_y), (50, 50, 50), 1)
 
-    # Train B panel (far right)
-    bx=w-130; by=h-90
-    cv2.rectangle(display,(bx,by),(w,h),(28,28,28),-1)
-    cv2.putText(display,"TRAIN B",(bx+18,by+16),
-                cv2.FONT_HERSHEY_SIMPLEX,0.38,(0,220,50),1)
-    spd_col_b=(0,60,200) if zone==Zone.DANGER else (0,200,60)
-    cv2.putText(display,str(spd_b),(bx+28,by+60),
-                cv2.FONT_HERSHEY_SIMPLEX,1.9,spd_col_b,3)
-    cv2.putText(display,"1-7 ^v",(bx+18,by+78),
-                cv2.FONT_HERSHEY_SIMPLEX,0.35,(100,100,100),1)
+    # ── Train A speed block (left) ────────────────────────────
+    col_a   = (0, 165, 255)
+    ble_a_c = (0, 200, 60) if ble.connected_a else (60, 60, 200)
+    cv2.rectangle(display, (0, dash_y), (170, h), (24, 24, 24), -1)
+    cv2.line(display, (170, dash_y), (170, h), (50, 50, 50), 1)
+    # BLE dot
+    cv2.circle(display, (14, dash_y + 14), 5, ble_a_c, -1)
+    cv2.putText(display, "TRAIN  A",
+                (24, dash_y + 18),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, col_a, 1)
+    # Large speed number
+    spd_a_col = (0, 60, 200) if zone == Zone.DANGER else col_a
+    cv2.putText(display, str(spd_a),
+                (18, dash_y + 72),
+                cv2.FONT_HERSHEY_SIMPLEX, 2.2, spd_a_col, 3)
+    cv2.putText(display, "/ 7",
+                (90, dash_y + 72),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (80, 80, 80), 1)
+    cv2.putText(display, "[  faster    ]  slower",
+                (8, dash_y + 92),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.30, (90, 90, 90), 1)
 
-    # Bottom bar
-    cv2.rectangle(display,(0,h-22),(w-265,h),(18,18,18),-1)
-    cv2.putText(display,
-                "A:[ ]speed  B:1-7/arrows  E=StopBoth  S=StopB  R=ResumeB  H=Horn  Q=Quit",
-                (8,h-7),cv2.FONT_HERSHEY_SIMPLEX,0.32,(120,120,120),1)
+    # ── Train B speed block (right) ───────────────────────────
+    col_b   = (0, 220, 50)
+    ble_b_c = (0, 200, 60) if ble.connected_b else (60, 60, 200)
+    cv2.rectangle(display, (w - 170, dash_y), (w, h), (24, 24, 24), -1)
+    cv2.line(display, (w - 170, dash_y), (w - 170, h), (50, 50, 50), 1)
+    cv2.circle(display, (w - 14, dash_y + 14), 5, ble_b_c, -1)
+    cv2.putText(display, "TRAIN  B",
+                (w - 150, dash_y + 18),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, col_b, 1)
+    spd_b_col = (0, 60, 200) if zone == Zone.DANGER else col_b
+    cv2.putText(display, str(spd_b),
+                (w - 152, dash_y + 72),
+                cv2.FONT_HERSHEY_SIMPLEX, 2.2, spd_b_col, 3)
+    cv2.putText(display, "/ 7",
+                (w - 80, dash_y + 72),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (80, 80, 80), 1)
+    cv2.putText(display, "1-7 keys  /  Arrow Up  Down",
+                (w - 168, dash_y + 92),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.30, (90, 90, 90), 1)
+
+    # ── Mode badge (centre top) ───────────────────────────────
+    mode_lbl = "MANUAL" if manual_mode else "AUTO"
+    mode_col = (0, 200, 255) if manual_mode else (0, 180, 60)
+    mx = w // 2
+    cv2.rectangle(display, (mx - 42, dash_y + 4),
+                  (mx + 42, dash_y + 24), mode_col, -1)
+    cv2.putText(display, mode_lbl,
+                (mx - 34, dash_y + 19),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 0, 0), 2)
+
+    # ── Command buttons (centre panel) ────────────────────────
+    # Helper: draw one key button, return next x
+    def _btn(x, y, key, label, kc=(55, 55, 55), lc=(170, 170, 170)):
+        kw = max(20, len(key) * 7 + 8)
+        lw = len(label) * 6 + 6
+        bh = 20
+        # key box
+        cv2.rectangle(display, (x, y), (x + kw, y + bh), kc, -1)
+        cv2.rectangle(display, (x, y), (x + kw, y + bh), (80, 80, 80), 1)
+        cv2.putText(display, key, (x + 4, y + 14),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.36, (230, 230, 230), 1)
+        # label box
+        cv2.rectangle(display, (x + kw, y), (x + kw + lw, y + bh),
+                      (30, 30, 30), -1)
+        cv2.rectangle(display, (x + kw, y), (x + kw + lw, y + bh),
+                      (55, 55, 55), 1)
+        cv2.putText(display, label, (x + kw + 3, y + 14),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.33, lc, 1)
+        return x + kw + lw + 5
+
+    # Row 1 — top row of buttons
+    r1y = dash_y + 32
+    x = 178
+    x = _btn(x, r1y, "M",   "Mode",     (0, 120, 160))
+    x = _btn(x, r1y, "E",   "Stop Both",(140, 0, 0),  (255, 120, 120))
+    x = _btn(x, r1y, "S",   "Stop B",   (120, 0, 0),  (200, 100, 100))
+    x = _btn(x, r1y, "R",   "Resume B", (0, 100, 0),  (100, 220, 100))
+    x = _btn(x, r1y, "A",   "Resel A",  (0, 80, 140))
+    x = _btn(x, r1y, "B",   "Resel B",  (0, 100, 40))
+
+    # Row 2 — bottom row of buttons
+    r2y = dash_y + 58
+    x = 178
+    x = _btn(x, r2y, "[",   "Slow A",   (40, 80, 120))
+    x = _btn(x, r2y, "]",   "Fast A",   (40, 80, 120))
+    x = _btn(x, r2y, "1-7", "Set B Spd",(60, 60, 60))
+    x = _btn(x, r2y, "^v",  "B Speed",  (60, 60, 60))
+    x = _btn(x, r2y, "T",   "Table",    (60, 60, 60))
+    x = _btn(x, r2y, "H",   "Horn",     (60, 60, 60))
+    x = _btn(x, r2y, "K",   "Path",     (60, 60, 60))
+    x = _btn(x, r2y, "Q",   "Quit",     (80, 30, 30), (200, 130, 130))
 
 
 # ── Main ──────────────────────────────────────────────────────────
