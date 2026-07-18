@@ -12,8 +12,8 @@
 
 # ── TRAIN A — FRONT TRAIN (BLE) ───────────────────────────────────
 # ★ UPDATE MAC to your actual front train address
-TRAIN_A_MAC  = "CC:01:78:D0:F0:99"
-TRAIN_A_NAME = "LC015556-99F0"
+TRAIN_A_MAC  = "60:FA:11:E3:94:C9"
+TRAIN_A_NAME = "LC-1-1-09F8-60FA"
 
 # ── TRAIN B — REAR TRAIN (BLE) ────────────────────────────────────
 TRAIN_B_MAC  = "60:F9:FB:49:94:C9"
