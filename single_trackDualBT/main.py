@@ -190,7 +190,7 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
     tracker._tkr_b.draw_search_area(display,(50,50,50))
 
     # Tracking circles
-    draw_tracking_circle(display,pos_a,(210,210,210),"BLACK")
+    draw_tracking_circle(display,pos_a,(210,210,210),"BLUE")
     draw_tracking_circle(display,pos_b,(0,165,255),f"ORANGE {spd_b}")
 
     # Confidence bars
@@ -221,7 +221,7 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
         dc={WAIT_TABLE:(0,200,200),WAIT_A:(210,210,210),WAIT_B:(0,165,255)}
         dcol=dc.get(tracker.state,(200,200,200))
         cv2.rectangle(display,(x1,y1),(x2,y2),dcol,2)
-        lbl={WAIT_TABLE:"TABLE",WAIT_A:"BLACK Train",WAIT_B:"ORANGE Train"}
+        lbl={WAIT_TABLE:"TABLE",WAIT_A:"BLUE Train",WAIT_B:"ORANGE Train"}
         cv2.putText(display,lbl.get(tracker.state,""),(x1+4,y1+18),
                     cv2.FONT_HERSHEY_SIMPLEX,0.55,dcol,2)
 
@@ -314,7 +314,7 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
     tracker._tkr_b.draw_search_area(display,(50,50,50))
 
     # Tracking circles
-    draw_tracking_circle(display,pos_a,(210,210,210),"BLACK")
+    draw_tracking_circle(display,pos_a,(210,210,210),"BLUE")
     draw_tracking_circle(display,pos_b,(0,165,255),f"ORANGE {spd_b}")
 
     # Confidence bars
@@ -345,7 +345,7 @@ def draw_overlay(display, tracker, pos_a, pos_b, dist, zone,
         dc={WAIT_TABLE:(0,200,200),WAIT_A:(210,210,210),WAIT_B:(0,165,255)}
         dcol=dc.get(tracker.state,(200,200,200))
         cv2.rectangle(display,(x1,y1),(x2,y2),dcol,2)
-        lbl={WAIT_TABLE:"TABLE",WAIT_A:"BLACK Train",WAIT_B:"ORANGE Train"}
+        lbl={WAIT_TABLE:"TABLE",WAIT_A:"BLUE Train",WAIT_B:"ORANGE Train"}
         cv2.putText(display,lbl.get(tracker.state,""),(x1+4,y1+18),
                     cv2.FONT_HERSHEY_SIMPLEX,0.55,dcol,2)
 

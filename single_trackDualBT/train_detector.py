@@ -547,7 +547,7 @@ class DragTracker:
         if self.state==WAIT_TABLE:
             return "STEP 1 -- DRAG a box around the TABLE  (whole track oval)"
         elif self.state==WAIT_A:
-            return "STEP 2 -- DRAG a box around BLACK Train  (front leader)"
+            return "STEP 2 -- DRAG a box around BLUE Train  (front leader)"
         elif self.state==WAIT_B:
             return "STEP 3 -- DRAG a box around ORANGE Train  (rear follower)"
         la=("LOCKED" if self._tkr_a.is_locked else
