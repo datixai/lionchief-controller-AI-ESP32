@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LionChief Control</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --navy:#1e3a8a;--blue:#2563eb;--blue-lt:#3b82f6;--blue-pale:#eff6ff;
+  --white:#ffffff;--bg:#f0f5ff;--border:#bfdbfe;--border-lt:#dbeafe;
+  --text:#0f172a;--muted:#64748b;
+  --green:#16a34a;--red:#b91c1c;--orange:#ea580c;--amber:#b45309;
+  --shadow:0 1px 4px rgba(30,64,175,.12);
+  --r:7px;--r-sm:5px;
+}
+html,body{height:100vh;overflow:hidden}
+body{
+  font-family:'Segoe UI',system-ui,sans-serif;
+  background:var(--navy);
+  display:flex;flex-direction:column;
+  font-size:12px;color:var(--text);
+}
+
+/* ── HEADER ─────────────────────────────────────────── */
+header{
+  height:46px;min-height:46px;
+  background:var(--navy);
+  display:flex;align-items:center;gap:0;
+  padding:0 12px;
+  border-bottom:1px solid rgba(255,255,255,.12);
+}
+.logo{
+  display:flex;align-items:center;gap:7px;
+  padding-right:14px;border-right:1px solid rgba(255,255,255,.15);
+  margin-right:12px;
+}
+.logo-icon{font-size:18px}
+.logo-text{font-size:14px;font-weight:700;color:#fff;white-space:nowrap}
+
+/* KPI chips */
+.kpis{display:flex;align-items:center;gap:6px;flex:1}
+.kpi{
+  display:flex;align-items:center;gap:5px;
+  background:rgba(255,255,255,.08);
+  border:1px solid rgba(255,255,255,.14);
+  border-radius:20px;padding:3px 10px;
+  white-space:nowrap;
+}
+.kpi-label{font-size:10px;color:#93c5fd;text-transform:uppercase;letter-spacing:.5px;font-weight:600}
+.kpi-val{font-size:13px;font-weight:700;color:#fff;min-width:20px}
+.kpi-unit{font-size:10px;color:#93c5fd}
+
+/* Zone badge */
+#kz{transition:background .3s,border-color .3s}
+.z-DANGER {background:rgba(185,28,28,.5)!important;border-color:rgba(239,68,68,.7)!important}
+.z-WARNING{background:rgba(180,83,9,.5)!important;border-color:rgba(251,146,60,.7)!important}
+.z-CAUTION{background:rgba(161,98,7,.5)!important;border-color:rgba(250,204,21,.7)!important}
+.z-SAFE   {background:rgba(22,101,52,.5)!important;border-color:rgba(34,197,94,.7)!important}
+.z-FAR    {background:rgba(30,58,138,.5)!important;border-color:rgba(96,165,250,.7)!important}
+.z-ESCAPE {background:rgba(109,40,217,.5)!important;border-color:rgba(167,139,250,.7)!important}
+
+/* BLE pills */
+.ble-pills{display:flex;gap:5px;margin-left:auto;padding-left:10px}
+.bp{
+  display:flex;align-items:center;gap:5px;
+  background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.12);
+  border-radius:14px;padding:3px 9px;
+  font-size:11px;font-weight:600;color:rgba(255,255,255,.45);
+  transition:all .3s;
+}
+.bp.ok {background:rgba(22,163,74,.22);border-color:rgba(22,163,74,.5);color:#86efac}
+.bp.err{background:rgba(185,28,28,.22);border-color:rgba(185,28,28,.5);color:#fca5a5}
+.bd{width:7px;height:7px;border-radius:50%;background:#475569;transition:background .3s}
+.bp.ok .bd{background:#22c55e;box-shadow:0 0 5px #22c55e;animation:blink 2s infinite}
+.bp.err .bd{background:#ef4444}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
+
+/* ── CAMERA SECTION ─────────────────────────────────── */
+.cam-section{
+  flex:1;overflow:hidden;
+  background:#000;
+  position:relative;
+  display:flex;align-items:center;justify-content:center;
+}
+#camera{max-height:100%;max-width:100%;object-fit:contain;display:block;cursor:crosshair;user-select:none;-webkit-user-drag:none}
+
+/* Camera top bar overlay */
+.cam-bar{
+  position:absolute;top:0;left:0;right:0;
+  background:linear-gradient(180deg,rgba(0,0,0,.65) 0%,transparent 100%);
+  padding:8px 14px;
+  display:flex;align-items:center;justify-content:space-between;
+}
+.cam-step{font-size:12px;font-weight:600;color:#fff}
+.cam-mode{font-size:11px;padding:2px 10px;border-radius:10px;font-weight:700}
+.cm-auto  {background:#16a34a;color:#fff}
+.cm-manual{background:#b45309;color:#fff}
+.cm-wait  {background:#1d4ed8;color:#fff}
+.cm-paused{background:#b91c1c;color:#fff}
+
+/* Confirm overlay */
+.conf-ov{
+  position:absolute;inset:0;
+  background:rgba(15,23,42,.8);backdrop-filter:blur(6px);
+  display:flex;align-items:center;justify-content:center;z-index:20;
+}
+.conf-ov.hidden{display:none}
+.conf-box{
+  background:#fff;border:2px solid var(--blue);border-radius:14px;
+  padding:28px 36px;text-align:center;max-width:440px;
+  box-shadow:0 20px 60px rgba(30,64,175,.3);
+}
+.conf-box h2{color:var(--navy);font-size:18px;margin-bottom:6px}
+.conf-box p{color:var(--muted);font-size:12px;margin-bottom:20px}
+.conf-row{display:flex;gap:12px;justify-content:center}
+
+/* Paused banner */
+.pause-banner{
+  position:absolute;top:46px;left:0;right:0;
+  background:rgba(185,28,28,.92);color:#fff;
+  text-align:center;padding:7px;font-weight:700;font-size:12px;
+}
+.pause-banner.hidden{display:none}
+
+/* ── CONTROLS BAR ───────────────────────────────────── */
+.ctrl-bar{
+  height:178px;min-height:178px;
+  background:var(--bg);
+  border-top:2px solid var(--border);
+  display:grid;
+  grid-template-columns:210px 1fr 210px;
+  gap:0;
+}
+.ctrl-bar>*{border-right:1px solid var(--border-lt)}
+.ctrl-bar>*:last-child{border-right:none}
+
+/* ── TRAIN PANELS ────────────────────────────────────── */
+.tp{padding:8px 10px;display:flex;flex-direction:column;gap:6px}
+.tp-hdr{
+  display:flex;align-items:center;justify-content:space-between;
+  padding-bottom:5px;border-bottom:1px solid var(--border-lt);
+}
+.tp-title{font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.6px}
+.tp-blue  .tp-title{color:var(--blue)}
+.tp-orange .tp-title{color:var(--orange)}
+
+.sp-row{display:flex;align-items:center;gap:8px}
+.sp-num{font-size:32px;font-weight:800;line-height:1}
+.tp-blue   .sp-num{color:var(--blue)}
+.tp-orange .sp-num{color:var(--orange)}
+.sp-of7{font-size:13px;color:var(--muted);font-weight:500}
+
+.track{height:6px;background:#e2e8f0;border-radius:99px;overflow:hidden;flex:1}
+.fill{height:100%;border-radius:99px;transition:width .3s}
+.tp-blue   .fill{background:linear-gradient(90deg,#60a5fa,#1d4ed8)}
+.tp-orange .fill{background:linear-gradient(90deg,#fb923c,#ea580c)}
+
+.conf-row2{display:flex;align-items:center;gap:6px}
+.cl{font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:600;min-width:26px}
+.ct{flex:1;height:4px;background:#e2e8f0;border-radius:99px;overflow:hidden}
+.cf{height:100%;border-radius:99px;transition:width .3s,background .3s}
+.cp{font-size:10px;color:var(--muted);min-width:26px;text-align:right}
+
+.tb{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.spd-row2{display:flex;gap:2px}
+.sb{
+  flex:1;height:24px;background:#f1f5f9;
+  border:1px solid #cbd5e1;border-radius:4px;
+  font-size:11px;font-weight:700;color:#475569;cursor:pointer;
+  transition:all .15s;
+}
+.sb:hover{background:var(--blue-pale);border-color:var(--blue-lt);color:var(--blue)}
+.tp-orange .sb:hover{background:#fff7ed;border-color:#fb923c;color:var(--orange)}
+
+/* ── SHARED CENTRE PANEL ────────────────────────────── */
+.sp{padding:8px 12px;display:flex;flex-direction:column;gap:5px}
+.sp-hdr{font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--navy);padding-bottom:5px;border-bottom:1px solid var(--border-lt)}
+.btn-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px}
+.btn-grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px}
+.info-bar{
+  background:var(--blue-pale);border:1px solid var(--border);
+  border-radius:var(--r-sm);padding:4px 8px;
+  font-size:11px;color:var(--blue);font-weight:500;
+  text-align:center;line-height:1.3;
+}
+
+/* ── BUTTONS ─────────────────────────────────────────── */
+.btn{
+  display:flex;align-items:center;justify-content:center;gap:3px;
+  padding:5px 8px;border-radius:var(--r-sm);border:1px solid transparent;
+  font-size:11px;font-weight:600;cursor:pointer;
+  transition:all .13s;white-space:nowrap;line-height:1.2;text-align:center;
+}
+.btn:active{transform:scale(.96)}
+.btn-p{background:var(--blue);color:#fff;border-color:#1d4ed8}
+.btn-p:hover{background:#1d4ed8}
+.btn-d{background:var(--red);color:#fff;border-color:#991b1b}
+.btn-d:hover{background:#991b1b}
+.btn-g{background:var(--green);color:#fff;border-color:#166534}
+.btn-g:hover{background:#166534}
+.btn-s{background:#fff1f2;color:var(--red);border-color:#fecaca}
+.btn-s:hover{background:var(--red);color:#fff}
+.btn-r{background:#f0fdf4;color:var(--green);border-color:#bbf7d0}
+.btn-r:hover{background:var(--green);color:#fff}
+.btn-n{background:var(--blue-pale);color:var(--blue);border-color:var(--border)}
+.btn-n:hover{background:#dbeafe}
+.btn-q{background:#f8fafc;color:var(--muted);border-color:var(--border-lt)}
+.btn-q:hover{background:var(--blue-pale);color:var(--blue)}
+.btn-xl{padding:10px 16px;font-size:13px;font-weight:700;border-radius:8px;min-width:160px}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<header>
+  <div class="logo">
+    <span class="logo-icon">🚂</span>
+    <span class="logo-text">LionChief</span>
+  </div>
+  <div class="kpis">
+    <div class="kpi" id="kz">
+      <span class="kpi-label">Zone</span>
+      <span class="kpi-val" id="kv">---</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Gap</span>
+      <span class="kpi-val" id="kgap">---</span>
+      <span class="kpi-unit">px</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Blue</span>
+      <span class="kpi-val" id="ksa">0</span>
+      <span class="kpi-unit">/7</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Orange</span>
+      <span class="kpi-val" id="ksb">0</span>
+      <span class="kpi-unit">/7</span>
+    </div>
+    <div class="kpi">
+      <span class="kpi-label">Mode</span>
+      <span class="kpi-val" id="kmode">---</span>
+    </div>
+  </div>
+  <div class="ble-pills">
+    <div class="bp" id="ble-a"><span class="bd" id="dot-a"></span>BLUE</div>
+    <div class="bp" id="ble-b"><span class="bd" id="dot-b"></span>ORANGE</div>
+  </div>
+</header>
+
+<!-- CAMERA -->
+<div class="cam-section">
+  <img id="camera" src="/video_feed" alt="Camera..." draggable="false">
+
+  <div class="cam-bar">
+    <span class="cam-step" id="instruction-text">Loading...</span>
+    <span class="cam-mode cm-wait" id="mode-badge">WAIT</span>
+  </div>
+
+  <div class="conf-ov hidden" id="confirm-overlay">
+    <div class="conf-box">
+      <h2>Both trains selected!</h2>
+      <p>How do you want to start?</p>
+      <div class="conf-row">
+        <button class="btn btn-g btn-xl" onclick="sendCmd('start_auto')">&#9654; Start AUTO<br><small style="font-weight:400;font-size:11px">Gap detection</small></button>
+        <button class="btn btn-xl" style="background:#b45309;color:#fff;border-color:#92400e" onclick="sendCmd('start_manual')">&#127918; Start MANUAL<br><small style="font-weight:400;font-size:11px">Manual speed</small></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="pause-banner hidden" id="paused-overlay">
+    &#9888; AUTO-PAUSED — Tracker lost. Re-select a train below.
+  </div>
+</div>
+
+<!-- CONTROLS BAR -->
+<div class="ctrl-bar">
+
+  <!-- BLUE Train -->
+  <div class="tp tp-blue">
+    <div class="tp-hdr">
+      <span class="tp-title">&#9679; Blue Train</span>
+      <span style="font-size:9px;color:var(--muted)">FRONT LEADER</span>
+    </div>
+    <div class="sp-row">
+      <span class="sp-num" id="spd-a-num">0</span><span class="sp-of7">/7</span>
+      <div class="track"><div class="fill" id="spd-a-bar"></div></div>
+    </div>
+    <div class="conf-row2">
+      <span class="cl">Conf</span>
+      <div class="ct"><div class="cf" id="conf-a-fill"></div></div>
+      <span class="cp" id="conf-a-pct">0%</span>
+    </div>
+    <div class="tb">
+      <button class="btn btn-n" onclick="sendCmd('a_slower')">&#9664; Slower</button>
+      <button class="btn btn-n" onclick="sendCmd('a_faster')">Faster &#9654;</button>
+      <button class="btn btn-s" onclick="sendCmd('a_stop')">&#9632; Stop</button>
+      <button class="btn btn-r" onclick="sendCmd('a_resume')">&#9654; Resume</button>
+    </div>
+  </div>
+
+  <!-- Shared Centre -->
+  <div class="sp">
+    <div class="sp-hdr">&#9881; Controls</div>
+    <div class="btn-grid">
+      <button class="btn btn-p" id="btn-mode" onclick="sendCmd('toggle_manual')">&#9654; AUTO Mode</button>
+      <button class="btn btn-d" onclick="sendCmd('stop_both')">&#9632;&#9632; Stop Both</button>
+    </div>
+    <div class="info-bar" id="info-status">Waiting for train selection...</div>
+    <div class="btn-grid">
+      <button class="btn btn-q" onclick="sendCmd('reselect_a')">&#9650; Reselect Blue</button>
+      <button class="btn btn-q" onclick="sendCmd('reselect_b')">&#9650; Reselect Orange</button>
+    </div>
+    <div class="btn-grid3">
+      <button class="btn btn-q" onclick="sendCmd('redraw_table')">&#9633; Table</button>
+      <button class="btn btn-q" onclick="sendCmd('horn')">&#128264; Horn</button>
+      <button class="btn btn-q" onclick="sendCmd('lights')">&#128161; Lights</button>
+    </div>
+    <div style="font-size:9px;color:var(--muted);line-height:1.6;margin-top:1px">
+      <b style="color:var(--blue)">Blue:</b> [ ] slower/faster &nbsp;
+      <b style="color:var(--orange)">Orange:</b> 1-7 speed, +/- adjust &nbsp;
+      <b style="color:var(--green)">All:</b> M mode, E stop both
+    </div>
+  </div>
+
+  <!-- ORANGE Train -->
+  <div class="tp tp-orange">
+    <div class="tp-hdr">
+      <span class="tp-title">&#9679; Orange Train</span>
+      <span style="font-size:9px;color:var(--muted)">REAR FOLLOWER</span>
+    </div>
+    <div class="sp-row">
+      <span class="sp-num" id="spd-b-num">0</span><span class="sp-of7">/7</span>
+      <div class="track"><div class="fill" id="spd-b-bar"></div></div>
+    </div>
+    <div class="conf-row2">
+      <span class="cl">Conf</span>
+      <div class="ct"><div class="cf" id="conf-b-fill"></div></div>
+      <span class="cp" id="conf-b-pct">0%</span>
+    </div>
+    <div class="spd-row2">
+      <button class="sb" onclick="sendCmd('b_speed',1)">1</button>
+      <button class="sb" onclick="sendCmd('b_speed',2)">2</button>
+      <button class="sb" onclick="sendCmd('b_speed',3)">3</button>
+      <button class="sb" onclick="sendCmd('b_speed',4)">4</button>
+      <button class="sb" onclick="sendCmd('b_speed',5)">5</button>
+      <button class="sb" onclick="sendCmd('b_speed',6)">6</button>
+      <button class="sb" onclick="sendCmd('b_speed',7)">7</button>
+    </div>
+    <div class="tb">
+      <button class="btn btn-n" onclick="sendCmd('b_slower')">&#9664; Slower</button>
+      <button class="btn btn-n" onclick="sendCmd('b_faster')">Faster &#9654;</button>
+      <button class="btn btn-s" onclick="sendCmd('b_stop')">&#9632; Stop</button>
+      <button class="btn btn-r" onclick="sendCmd('b_resume')">&#9654; Resume</button>
+    </div>
+  </div>
+
+</div><!-- ctrl-bar -->
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════════
+   app.js  —  LionChief Web UI JavaScript
+   Datix AI  |  July 2026
+═══════════════════════════════════════════════════════════════ */
+
+// ── SocketIO connection ───────────────────────────────────────────
+const socket = io();
+
+// ── Cached DOM references ─────────────────────────────────────────
+const cam          = document.getElementById('camera');
+const dotA         = document.getElementById('dot-a');
+const dotB         = document.getElementById('dot-b');
+const zoneBadge    = document.getElementById('zone-badge');
+const gapVal       = document.getElementById('gap-val');
+const modeVal      = document.getElementById('mode-val');
+const confAFill    = document.getElementById('conf-a-fill');
+const confBFill    = document.getElementById('conf-b-fill');
+const spdANum      = document.getElementById('spd-a-num');
+const spdBNum      = document.getElementById('spd-b-num');
+const spdABar      = document.getElementById('spd-a-bar');
+const spdBBar      = document.getElementById('spd-b-bar');
+const confirmOv    = document.getElementById('confirm-overlay');
+const pausedOv     = document.getElementById('paused-overlay');
+const instrBox     = document.getElementById('instruction-box');
+const btnMode      = document.getElementById('btn-mode');
+
+// ══════════════════════════════════════════════════════════════════
+//  SEND COMMAND
+// ══════════════════════════════════════════════════════════════════
+async function sendCmd(cmd, val = null) {
+  try {
+    await fetch('/api/command', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cmd, val }),
+    });
+  } catch (e) {
+    console.error('Command failed:', cmd, e);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  MOUSE — box drawing on camera image
+// ══════════════════════════════════════════════════════════════════
+let isDragging = false;
+
+function camCoords(e) {
+  const rect   = cam.getBoundingClientRect();
+  const scaleX = 960 / cam.clientWidth;
+  const scaleY = 540 / cam.clientHeight;
+  return {
+    x: Math.round((e.clientX - rect.left) * scaleX),
+    y: Math.round((e.clientY - rect.top)  * scaleY),
+  };
+}
+
+async function sendMouse(event, e) {
+  const { x, y } = camCoords(e);
+  try {
+    await fetch('/api/mouse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event, x, y }),
+    });
+  } catch (_) {}
+}
+
+cam.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  isDragging = true;
+  sendMouse('down', e);
+});
+cam.addEventListener('mousemove', (e) => {
+  if (isDragging) sendMouse('move', e);
+});
+cam.addEventListener('mouseup', (e) => {
+  if (isDragging) {
+    isDragging = false;
+    sendMouse('up', e);
+  }
+});
+cam.addEventListener('mouseleave', (e) => {
+  if (isDragging) {
+    isDragging = false;
+    sendMouse('up', e);
+  }
+});
+// Prevent context menu on right-click over camera
+cam.addEventListener('contextmenu', (e) => e.preventDefault());
+
+// Touch support (tablet/phone)
+cam.addEventListener('touchstart', (e) => {
+  e.preventDefault();
+  isDragging = true;
+  sendMouse('down', e.touches[0]);
+}, { passive: false });
+cam.addEventListener('touchmove', (e) => {
+  e.preventDefault();
+  if (isDragging) sendMouse('move', e.touches[0]);
+}, { passive: false });
+cam.addEventListener('touchend', (e) => {
+  e.preventDefault();
+  if (isDragging) {
+    isDragging = false;
+    sendMouse('up', e.changedTouches[0]);
+  }
+}, { passive: false });
+
+// ══════════════════════════════════════════════════════════════════
+//  SOCKETIO — real-time status updates
+// ══════════════════════════════════════════════════════════════════
+
+socket.on('connect', () => {
+  console.log('WebSocket connected');
+});
+
+socket.on('status', (data) => {
+  updateStatus(data);
+});
+
+socket.on('confirm_needed', () => {
+  confirmOv.classList.remove('hidden');
+});
+
+socket.on('auto_paused', () => {
+  pausedOv.classList.remove('hidden');
+});
+
+socket.on('auto_resumed', () => {
+  pausedOv.classList.add('hidden');
+});
+
+// ══════════════════════════════════════════════════════════════════
+//  UPDATE UI
+// ══════════════════════════════════════════════════════════════════
+
+const ZONE_CLASSES = ['zone-DANGER','zone-WARNING','zone-CAUTION',
+                      'zone-SAFE','zone-FAR','zone-ESCAPE','zone-unknown'];
+
+function updateStatus(d) {
+  // BLE dots
+  dotA.className = 'dot ' + (d.ble_a ? 'connected' : 'connecting');
+  dotB.className = 'dot ' + (d.ble_b ? 'connected' : 'connecting');
+
+  // Zone badge
+  zoneBadge.textContent = d.zone || 'UNKNOWN';
+  ZONE_CLASSES.forEach(c => zoneBadge.classList.remove(c));
+  zoneBadge.classList.add('zone-' + (d.zone || 'unknown'));
+
+  // Gap
+  gapVal.textContent = d.dist ? d.dist + 'px' : '---';
+
+  // Mode
+  if (d.waiting) {
+    modeVal.textContent = 'SELECT MODE';
+    modeVal.style.color = '#ffcc00';
+  } else if (d.paused) {
+    modeVal.textContent = 'AUTO-PAUSED';
+    modeVal.style.color = '#ff4444';
+  } else if (d.manual) {
+    modeVal.textContent = 'MANUAL';
+    modeVal.style.color = '#00ccff';
+    btnMode.textContent = 'M  Switch to AUTO';
+  } else {
+    modeVal.textContent = 'AUTO';
+    modeVal.style.color = '#22cc55';
+    btnMode.textContent = 'M  Switch to MANUAL';
+  }
+
+  // Speeds
+  spdANum.textContent = d.spd_a || 0;
+  spdBNum.textContent = d.spd_b || 0;
+  spdABar.style.width = ((d.spd_a || 0) / 7 * 100) + '%';
+  spdBBar.style.width = ((d.spd_b || 0) / 7 * 100) + '%';
+
+  // Confidence bars
+  confAFill.style.width = (d.conf_a || 0) + '%';
+  confBFill.style.width = (d.conf_b || 0) + '%';
+  confAFill.style.background = confColor(d.conf_a);
+  confBFill.style.background = confColor(d.conf_b);
+
+  // Auto-pause overlay
+  if (d.paused) {
+    pausedOv.classList.remove('hidden');
+  } else {
+    pausedOv.classList.add('hidden');
+  }
+
+  // Confirm overlay
+  if (d.waiting) {
+    confirmOv.classList.remove('hidden');
+  } else {
+    confirmOv.classList.add('hidden');
+  }
+
+  // Speed bar color danger
+  if (d.zone === 'DANGER') {
+    spdBBar.style.background = 'linear-gradient(90deg, #660000, #ff2200)';
+  } else {
+    spdBBar.style.background = 'linear-gradient(90deg, #c04000, #ff8030)';
+  }
+}
+
+function confColor(pct) {
+  if (pct > 75) return '#22cc55';
+  if (pct > 40) return '#ffaa00';
+  return '#ff4422';
+}
+
+// ══════════════════════════════════════════════════════════════════
+//  KEYBOARD SHORTCUTS (still work in browser)
+// ══════════════════════════════════════════════════════════════════
+document.addEventListener('keydown', (e) => {
+  // Ignore if typing in an input
+  if (e.target.tagName === 'INPUT') return;
+
+  const key = e.key;
+  if      (key === '[')       sendCmd('a_slower');
+  else if (key === ']')       sendCmd('a_faster');
+  else if (key === 'F1')      { e.preventDefault(); sendCmd('a_stop'); }
+  else if (key === 'F2')      { e.preventDefault(); sendCmd('a_resume'); }
+  else if (key === 's' || key === 'S') sendCmd('b_stop');
+  else if (key === 'r' || key === 'R') sendCmd('b_resume');
+  else if (key === 'm' || key === 'M') sendCmd('toggle_manual');
+  else if (key === 'e' || key === 'E') sendCmd('stop_both');
+  else if (key === 'a' || key === 'A') sendCmd('reselect_a');
+  else if (key === 'b' || key === 'B') sendCmd('reselect_b');
+  else if (key === 't' || key === 'T') sendCmd('redraw_table');
+  else if (key === 'h' || key === 'H') sendCmd('horn');
+  else if (key === 'l' || key === 'L') sendCmd('lights');
+  else if (key === '+' || key === '=') sendCmd('b_faster');
+  else if (key === '-' || key === '_') sendCmd('b_slower');
+  else if (key === 'ArrowUp')          { e.preventDefault(); sendCmd('b_faster'); }
+  else if (key === 'ArrowDown')        { e.preventDefault(); sendCmd('b_slower'); }
+  else if ('1234567'.includes(key))    sendCmd('b_speed', parseInt(key));
+  else if (key === 'y' || key === 'Y') sendCmd('start_auto');
+  else if (key === 'n' || key === 'N') sendCmd('start_manual');
+});
+
+// ── Initial status fetch ──────────────────────────────────────────
+fetch('/api/status')
+  .then(r => r.json())
+  .then(d => updateStatus(d))
+  .catch(() => {});
+
+
+// Extra UI updates
+const kz    = document.getElementById('kz');
+const kv    = document.getElementById('kv');
+const kgap  = document.getElementById('kgap');
+const ksa   = document.getElementById('ksa');
+const ksb   = document.getElementById('ksb');
+const kmode = document.getElementById('kmode');
+const istat = document.getElementById('info-status');
+const mbadge= document.getElementById('mode-badge');
+const itext = document.getElementById('instruction-text');
+const bpA   = document.getElementById('ble-a');
+const bpB   = document.getElementById('ble-b');
+const caP   = document.getElementById('conf-a-pct');
+const cbP   = document.getElementById('conf-b-pct');
+
+socket.on('status', (d) => {
+  // KPI bar
+  if(kv)   kv.textContent   = d.zone||'---';
+  if(kgap) kgap.textContent = d.dist||'---';
+  if(ksa)  ksa.textContent  = d.spd_a||0;
+  if(ksb)  ksb.textContent  = d.spd_b||0;
+
+  // Zone class on KPI chip
+  if(kz){
+    ['z-DANGER','z-WARNING','z-CAUTION','z-SAFE','z-FAR','z-ESCAPE']
+      .forEach(c=>kz.classList.remove(c));
+    if(d.zone) kz.classList.add('z-'+d.zone);
+  }
+
+  // BLE pills
+  if(bpA) bpA.className='bp '+(d.ble_a?'ok':'err');
+  if(bpB) bpB.className='bp '+(d.ble_b?'ok':'err');
+
+  // Conf %
+  if(caP) caP.textContent=(d.conf_a||0)+'%';
+  if(cbP) cbP.textContent=(d.conf_b||0)+'%';
+
+  // Mode badge + KPI
+  let mLabel='', mClass='cm-wait', mKPI='---', statusTxt='';
+  if(d.waiting){  mLabel='SELECT';  mClass='cm-wait';   mKPI='SELECT'; statusTxt='Select start mode above';}
+  else if(d.paused){mLabel='PAUSED'; mClass='cm-paused'; mKPI='PAUSED'; statusTxt='Tracker lost — reselect';}
+  else if(d.manual){mLabel='MANUAL'; mClass='cm-manual'; mKPI='MANUAL'; statusTxt='Manual control active';}
+  else {            mLabel='AUTO';   mClass='cm-auto';   mKPI='AUTO';   statusTxt='Gap detection running';}
+  if(mbadge){mbadge.textContent=mLabel; mbadge.className='cam-mode '+mClass;}
+  if(kmode) kmode.textContent=mKPI;
+  if(istat) istat.textContent=statusTxt;
+  if(btnMode) btnMode.textContent=(d.manual?'⏵ Switch AUTO':'⏸ Switch MAN');
+
+  // Step instruction
+  if(itext && d.step){
+    const m={
+      'WAIT_TABLE':'Step 1 — Drag a box around the TABLE area',
+      'WAIT_A':    'Step 2 — Drag a box around BLUE Train',
+      'WAIT_B':    'Step 3 — Drag a box around ORANGE Train',
+      'TRACKING':   statusTxt||'Tracking active',
+    };
+    itext.textContent=m[d.step]||'Tracking active';
+  }
+});
+</script>
+</body>
+</html>

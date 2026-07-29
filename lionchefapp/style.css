@@ -1,0 +1,322 @@
+/* ═══════════════════════════════════════════════════════════════
+   LionChief Web UI  —  Dark Theme
+   Datix AI  |  July 2026
+═══════════════════════════════════════════════════════════════ */
+
+:root {
+  --navy:      #1a3a5c;
+  --orange:    #e8650a;
+  --blue-tr:   #aaaacc;
+  --dark:      #0f0f0f;
+  --panel:     #1a1a1a;
+  --card:      #222222;
+  --border:    #333333;
+  --text:      #e0e0e0;
+  --muted:     #888888;
+  --green:     #1a9a3a;
+  --red:       #cc2200;
+  --blue-btn:  #1a4a7c;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--dark);
+  color: var(--text);
+  font-family: 'Segoe UI', Arial, sans-serif;
+  font-size: 14px;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── HEADER ─────────────────────────────────────────────────── */
+header {
+  background: var(--navy);
+  padding: 10px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 2px solid var(--orange);
+}
+.logo {
+  font-size: 20px;
+  font-weight: bold;
+  color: #fff;
+}
+.subtitle {
+  font-size: 12px;
+  color: #aac4e0;
+  margin-left: 12px;
+}
+.header-right { display: flex; gap: 12px; }
+.ble-badge {
+  display: flex; align-items: center; gap: 6px;
+  background: rgba(255,255,255,0.08);
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: bold;
+  color: #888;
+  border: 1px solid #333;
+}
+.dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: #555;
+  transition: background 0.4s;
+}
+.dot.connected  { background: #22cc55; box-shadow: 0 0 6px #22cc55; }
+.dot.connecting { background: #ffaa00; }
+
+/* ── MAIN ───────────────────────────────────────────────────── */
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 14px;
+  gap: 12px;
+}
+
+/* ── CAMERA ─────────────────────────────────────────────────── */
+.camera-wrap {
+  position: relative;
+  width: 960px;
+  max-width: 100%;
+  border: 2px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: #000;
+  cursor: crosshair;
+}
+#camera {
+  display: block;
+  width: 100%;
+  height: auto;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+/* Confirm overlay */
+.confirm-overlay {
+  position: absolute; inset: 0;
+  background: rgba(0,0,0,0.72);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+}
+.confirm-overlay.hidden { display: none; }
+.confirm-box {
+  background: var(--card);
+  border: 2px solid var(--orange);
+  border-radius: 12px;
+  padding: 32px 40px;
+  text-align: center;
+  max-width: 520px;
+}
+.confirm-box h2 { color: #fff; margin-bottom: 8px; font-size: 22px; }
+.confirm-box p  { color: var(--muted); margin-bottom: 24px; }
+.confirm-btns { display: flex; gap: 16px; justify-content: center; }
+
+/* Auto-paused banner */
+.paused-overlay {
+  position: absolute;
+  bottom: 0; left: 0; right: 0;
+  background: rgba(0,0,180,0.82);
+  color: #fff;
+  text-align: center;
+  padding: 10px;
+  font-weight: bold;
+  font-size: 13px;
+}
+.paused-overlay.hidden { display: none; }
+
+/* ── STATUS BAR ─────────────────────────────────────────────── */
+.status-bar {
+  width: 960px; max-width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 16px;
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.zone-badge {
+  font-weight: bold;
+  font-size: 13px;
+  padding: 4px 14px;
+  border-radius: 20px;
+  min-width: 90px;
+  text-align: center;
+}
+.zone-DANGER  { background:#aa1100; color:#fff; }
+.zone-WARNING { background:#cc6600; color:#fff; }
+.zone-CAUTION { background:#886600; color:#fff; }
+.zone-SAFE    { background:#1a6a2a; color:#fff; }
+.zone-FAR     { background:#1a3a6c; color:#fff; }
+.zone-ESCAPE  { background:#661166; color:#fff; }
+.zone-unknown { background:#333;    color:#888; }
+
+.status-item {
+  display: flex; align-items: center; gap: 8px;
+}
+.lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+.status-item span:last-child { font-weight: bold; color: #ccc; }
+.conf-bar {
+  width: 60px; height: 8px;
+  background: #333; border-radius: 4px; overflow: hidden;
+}
+.conf-bar > div {
+  height: 100%;
+  background: #1a9a3a;
+  transition: width 0.3s;
+}
+
+/* ── CONTROLS ───────────────────────────────────────────────── */
+.controls {
+  width: 960px; max-width: 100%;
+  display: grid;
+  grid-template-columns: 220px 1fr 220px;
+  gap: 12px;
+}
+
+/* Train panels */
+.train-panel {
+  background: var(--card);
+  border-radius: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.panel-title {
+  font-size: 13px;
+  font-weight: bold;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.panel-blue   .panel-title { color: #aaaaee; border-color: #aaaaee44; }
+.panel-orange .panel-title { color: var(--orange); border-color: #e8650a44; }
+
+.speed-display {
+  font-size: 42px;
+  font-weight: bold;
+  line-height: 1;
+  text-align: center;
+}
+.panel-blue   .speed-display { color: #aaaaee; }
+.panel-orange .speed-display { color: var(--orange); }
+.of7 { font-size: 18px; color: var(--muted); }
+
+.speed-bar-wrap { padding: 0 4px; }
+.speed-bar-bg {
+  height: 8px;
+  background: #333;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.speed-bar-fill {
+  height: 100%;
+  transition: width 0.3s ease;
+  width: 0%;
+}
+.blue-fill   { background: linear-gradient(90deg, #4444aa, #aaaaff); }
+.orange-fill { background: linear-gradient(90deg, #c04000, #ff8030); }
+
+/* Speed number buttons (Orange train) */
+.speed-btns {
+  display: flex; gap: 4px; justify-content: center;
+}
+.speed-btns button {
+  width: 26px; height: 26px;
+  background: #333; border: 1px solid #555;
+  border-radius: 4px; color: #ccc;
+  font-size: 12px; font-weight: bold;
+  cursor: pointer; transition: background 0.15s;
+}
+.speed-btns button:hover { background: var(--orange); color: #fff; }
+
+/* Train button rows */
+.train-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+/* ── SHARED PANEL ───────────────────────────────────────────── */
+.shared-panel {
+  background: var(--card);
+  border-radius: 8px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.shared-row {
+  display: flex; gap: 8px;
+}
+.shared-row .btn { flex: 1; }
+
+/* Instruction box */
+.instruction-box {
+  margin-top: 4px;
+  background: rgba(232,101,10,0.12);
+  border: 1px solid rgba(232,101,10,0.35);
+  border-radius: 6px;
+  padding: 10px 12px;
+  font-size: 12px;
+  color: #ffcc88;
+  text-align: center;
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* ── BUTTONS ────────────────────────────────────────────────── */
+.btn {
+  padding: 8px 10px;
+  border: 1px solid #444;
+  border-radius: 6px;
+  background: #2a2a2a;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: bold;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.15s, border-color 0.15s;
+  white-space: nowrap;
+}
+.btn:hover    { background: #3a3a3a; border-color: #666; }
+.btn:active   { transform: scale(0.97); }
+
+.btn-big      { padding: 12px 16px; font-size: 14px; }
+.btn-sm       { padding: 7px 10px; font-size: 11px; }
+.btn-green    { background: var(--green);   border-color: #22cc55; color: #fff; }
+.btn-green:hover  { background: #22aa44; }
+.btn-danger   { background: var(--red);     border-color: #ff4422; color: #fff; }
+.btn-danger:hover { background: #aa1100; }
+.btn-blue     { background: var(--blue-btn);border-color: #3366aa; color: #fff; }
+.btn-blue:hover   { background: #1a3a6c; }
+.btn-stop     { background: #3a1010; border-color: #aa2200; color: #ff8888; }
+.btn-stop:hover   { background: #551111; }
+.btn-go       { background: #103a10; border-color: #118811; color: #88ff88; }
+.btn-go:hover     { background: #155515; }
+.btn-nav      { background: #1a2a3a; border-color: #334466; color: #88aacc; }
+.btn-nav:hover    { background: #223344; }
+
+/* ── RESPONSIVE ─────────────────────────────────────────────── */
+@media (max-width: 1000px) {
+  .camera-wrap, .status-bar, .controls { width: 100%; }
+  .controls {
+    grid-template-columns: 1fr;
+  }
+}
