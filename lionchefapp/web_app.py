@@ -135,15 +135,12 @@ def draw_frame_overlay(display, tracker, pos_a, pos_b,
     draw_tracking_circle(display, pos_a, (180,180,180), "BLUE")
     draw_tracking_circle(display, pos_b, (0,165,255),   f"ORANGE {spd_b}")
 
-    # Gap line
+    # Gap line between train circles
     if pos_a and pos_b and dist is not None:
-        p1 = pos_b.head if a_chasing else pos_b.head
-        p2 = pos_a.tail if not a_chasing else pos_b.tail
-        if hasattr(pos_a,'x') and hasattr(pos_b,'x'):
-            cv2.line(display,(pos_a.x,pos_a.y),(pos_b.x,pos_b.y),zcol,1)
-            mx=(pos_a.x+pos_b.x)//2; my=(pos_a.y+pos_b.y)//2
-            cv2.putText(display,f"{dist:.0f}px | {zone}",
-                        (mx+6,my-6),cv2.FONT_HERSHEY_SIMPLEX,0.52,zcol,2)
+        cv2.line(display,(pos_a.x,pos_a.y),(pos_b.x,pos_b.y),zcol,1)
+        mx=(pos_a.x+pos_b.x)//2; my=(pos_a.y+pos_b.y)//2
+        cv2.putText(display,f"{dist:.0f}px | {zone}",
+                    (mx+6,my-6),cv2.FONT_HERSHEY_SIMPLEX,0.52,zcol,2)
 
     # Live drag rect
     if tracker.is_dragging and tracker.drag_start and tracker.drag_end:

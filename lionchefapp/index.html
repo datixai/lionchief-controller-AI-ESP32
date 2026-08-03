@@ -263,8 +263,11 @@ header{
       <h2>Both trains selected!</h2>
       <p>How do you want to start?</p>
       <div class="conf-row">
-        <button class="btn btn-g btn-xl" onclick="sendCmd('start_auto')">&#9654; Start AUTO<br><small style="font-weight:400;font-size:11px">Gap detection</small></button>
-        <button class="btn btn-xl" style="background:#b45309;color:#fff;border-color:#92400e" onclick="sendCmd('start_manual')">&#127918; Start MANUAL<br><small style="font-weight:400;font-size:11px">Manual speed</small></button>
+        <button class="btn btn-g btn-xl" onclick="startMode('start_auto')">&#9654; Start AUTO<br><small style="font-weight:400;font-size:11px">Gap detection</small></button>
+        <button class="btn btn-xl" style="background:#b45309;color:#fff;border-color:#92400e" onclick="startMode('start_manual')">&#127918; Start MANUAL<br><small style="font-weight:400;font-size:11px">Manual speed</small></button>
+      </div>
+      <div style="margin-top:12px;text-align:center">
+        <button class="btn" style="background:#f8fafc;color:#64748b;border-color:#e2e8f0;font-size:11px;width:100%" onclick="goBack()">&#8592; Go Back and Re-select Trains</button>
       </div>
     </div>
   </div>
@@ -620,6 +623,18 @@ const bpA   = document.getElementById('ble-a');
 const bpB   = document.getElementById('ble-b');
 const caP   = document.getElementById('conf-a-pct');
 const cbP   = document.getElementById('conf-b-pct');
+
+// Dismiss overlay immediately on mode selection
+function startMode(cmd) {
+  document.getElementById('confirm-overlay').classList.add('hidden');
+  sendCmd(cmd);
+}
+
+// Go Back - re-select orange train
+function goBack() {
+  document.getElementById('confirm-overlay').classList.add('hidden');
+  sendCmd('reselect_b');
+}
 
 socket.on('status', (d) => {
   // KPI bar
