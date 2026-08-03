@@ -10,19 +10,36 @@ echo.
 
 cd /d "%~dp0"
 
-:: Activate virtual environment
+:: Try venv in lionchefapp folder first, then parent folder
 call .venv\Scripts\activate.bat 2>nul
-if errorlevel 1 (
-    echo [ERROR] Virtual environment not found.
-    echo Run setup first:
-    echo   python -m venv .venv
-    echo   .venv\Scripts\activate
-    echo   pip install flask flask-socketio opencv-contrib-python bleak numpy
-    pause
-    exit /b 1
-)
+if not errorlevel 1 goto :venv_ok
 
-:: Install/check flask (silent)
+call ..\.venv\Scripts\activate.bat 2>nul
+if not errorlevel 1 goto :venv_ok
+
+call ..\venv\Scripts\activate.bat 2>nul
+if not errorlevel 1 goto :venv_ok
+
+call ..\env\Scripts\activate.bat 2>nul
+if not errorlevel 1 goto :venv_ok
+
+:: None found
+echo [ERROR] Virtual environment not found.
+echo.
+echo Run this in terminal then try again:
+echo.
+echo   cd C:\Users\peter\Documents\Linchief_train
+echo   .venv\Scripts\activate
+echo   cd lionchefapp
+echo   pip install flask flask-socketio
+echo.
+pause
+exit /b 1
+
+:venv_ok
+echo  [OK] Virtual environment activated.
+
+:: Install flask silently in case not installed yet
 pip install flask flask-socketio --quiet 2>nul
 
 :: Open browser after 3 seconds
