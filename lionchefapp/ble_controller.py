@@ -113,6 +113,12 @@ class SingleTrainBLE:
 
     # ── Accessory commands ─────────────────────────────────────────
 
+    def set_forward(self):
+        self._queue(config.CMD_FORWARD, f"Train{self._label} FORWARD")
+
+    def set_reverse(self):
+        self._queue(config.CMD_REVERSE, f"Train{self._label} REVERSE")
+
     def horn_on(self):    self._queue(config.CMD_HORN_ON,  f"Train{self._label} HORN ON")
     def horn_off(self):   self._queue(config.CMD_HORN_OFF, f"Train{self._label} HORN OFF")
     def bell_on(self):    self._queue(config.CMD_BELL_ON,  f"Train{self._label} BELL ON")

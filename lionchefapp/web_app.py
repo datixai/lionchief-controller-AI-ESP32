@@ -221,25 +221,49 @@ def draw_frame_overlay(display, tracker, pos_a, pos_b,
 def camera_loop():
     logger.info("Camera thread starting...")
 
-    # Try multiple camera indices and backends
+    # Try every camera index and backend combination.
+    # Also verify frames are not black - camera can open() successfully
+    # but return black frames when another app holds it, or previous
+    # session crashed without releasing it, or resolution not supported.
     cap = None
     for idx in [config.CAMERA_INDEX, 0, 1, 2]:
         for backend in [cv2.CAP_DSHOW, cv2.CAP_ANY]:
-            _c = cv2.VideoCapture(idx, backend)
-            if _c.isOpened():
-                cap = _c
-                logger.info(f"Camera opened: index={idx} backend={backend}")
-                break
+            try:
+                _c = cv2.VideoCapture(idx, backend)
+                if not _c.isOpened():
+                    _c.release()
+                    continue
+                _c.set(cv2.CAP_PROP_FRAME_WIDTH,  config.CAMERA_WIDTH)
+                _c.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
+                _c.set(cv2.CAP_PROP_FPS,          config.CAMERA_FPS)
+                # Read 8 test frames and check brightness
+                live = False
+                for _ in range(8):
+                    ret, fr = _c.read()
+                    if ret and fr is not None and fr.mean() > 2.0:
+                        live = True
+                        break
+                if live:
+                    cap = _c
+                    logger.info(f"Camera OK: index={idx} backend={backend}")
+                    break
+                else:
+                    logger.warning(
+                        f"Camera idx={idx} backend={backend}: "
+                        "opens but frames are BLACK -- trying next")
+                    _c.release()
+            except Exception as e:
+                logger.warning(f"Camera idx={idx}: {e}")
         if cap:
             break
 
-    if cap is None or not cap.isOpened():
-        logger.error("Cannot open any camera — check camera is plugged in")
+    if cap is None:
+        msg = ("Camera black or unavailable. Close Camera app, Teams, "
+               "Zoom, or any other app using the camera. "
+               "Unplug and replug the USB camera. Then refresh this page.")
+        logger.error(msg)
+        socketio.emit('camera_error', {'msg': msg})
         return
-
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  config.CAMERA_WIDTH)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.CAMERA_HEIGHT)
-    cap.set(cv2.CAP_PROP_FPS,          config.CAMERA_FPS)
 
     logger.info("Warming up camera...")
     for _ in range(config.CAMERA_WARMUP_FRAMES):
@@ -497,14 +521,27 @@ def command():
 
     # ── Emergency ─────────────────────────────────────────────────
     elif cmd == 'stop_both':
-        if ble: ble.emergency_stop_both()
+        # Force stop both trains directly - belt and suspenders approach
+        if ble:
+            ble.train_a.send_stop_raw()
+            ble.train_b.send_stop_raw()
+            ble.train_a.send_stop_raw()   # send twice for reliability
+            ble.train_b.send_stop_raw()
+            logger.warning("STOP BOTH -- dashboard button")
         if ctrl: ctrl.reset()
+        with state_lock:
+            state['spd_a'] = 0
+            state['spd_b'] = 0
 
     # ── Train A controls ──────────────────────────────────────────
     elif cmd == 'a_slower':
-        if ble: ble.train_a.set_speed(max(1, ble.train_a.user_speed - 1))
+        if ble:
+            ble.train_a.set_speed(max(1, ble.train_a.user_speed - 1))
+            with state_lock: state['spd_a'] = ble.train_a.current_speed
     elif cmd == 'a_faster':
-        if ble: ble.train_a.set_speed(min(7, ble.train_a.user_speed + 1))
+        if ble:
+            ble.train_a.set_speed(min(7, ble.train_a.user_speed + 1))
+            with state_lock: state['spd_a'] = ble.train_a.current_speed
     elif cmd == 'a_stop':
         if ble: ble.train_a.send_stop()
     elif cmd == 'a_resume':
@@ -512,9 +549,11 @@ def command():
 
     # ── Train B controls ──────────────────────────────────────────
     elif cmd == 'b_speed':
-        spd = max(1, min(7, int(val)))
+        spd = max(1, min(7, int(val or 1)))
         if ctrl: ctrl.set_user_speed(spd)
         if ble:  ble.train_b.set_speed(spd)
+        with state_lock:
+            state['spd_b'] = spd
     elif cmd == 'b_slower':
         if ctrl and ble:
             ctrl.set_user_speed(max(1, ctrl.user_speed - 1))
@@ -537,6 +576,19 @@ def command():
     elif cmd == 'redraw_table':
         tracker.redraw_table()
 
+    elif cmd == 'a_reverse':
+        if ble: ble.train_a.set_reverse()
+        logger.info("Train A REVERSE")
+    elif cmd == 'a_forward':
+        if ble: ble.train_a.set_forward()
+        logger.info("Train A FORWARD")
+    elif cmd == 'b_reverse':
+        if ble: ble.train_b.set_reverse()
+        logger.info("Train B REVERSE")
+    elif cmd == 'b_forward':
+        if ble: ble.train_b.set_forward()
+        logger.info("Train B FORWARD")
+
     # ── Accessories ───────────────────────────────────────────────
     elif cmd == 'horn':
         with state_lock:
@@ -556,6 +608,27 @@ def command():
             else:
                 ble.train_a.lights_off(); ble.train_b.lights_off()
 
+    return jsonify({'ok': True})
+
+
+@app.route('/api/quit', methods=['POST'])
+def quit_app():
+    """Stop both trains and shut down the server."""
+    def _shutdown():
+        time.sleep(0.4)
+        ble = state.get('ble')
+        if ble:
+            try:
+                ble.train_a.send_stop_raw()
+                ble.train_b.send_stop_raw()
+                time.sleep(0.3)
+                ble.shutdown()
+            except Exception:
+                pass
+        import os, signal
+        os.kill(os.getpid(), signal.SIGTERM)
+    import threading as _t
+    _t.Thread(target=_shutdown, daemon=True).start()
     return jsonify({'ok': True})
 
 
