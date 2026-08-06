@@ -3,16 +3,16 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LionChief Control</title>
+<title>Conductor Properties</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
-  --a:#2563eb;--a-pale:#eff6ff;--a-dk:#1d4ed8;
-  --b:#ea580c;--b-pale:#fff7ed;--b-dk:#c2410c;
-  --navy:#1e3a8a;--bg:#f0f5ff;--card:#fff;
+  --a:#2563eb;--a-pale:#eff6ff;--a-dk:#1d4ed8;--a-lt:#60a5fa;
+  --b:#ea580c;--b-pale:#fff7ed;--b-dk:#c2410c;--b-lt:#fb923c;
+  --navy:#1e3a8a;--bg:#f0f5ff;
   --border:#bfdbfe;--border-lt:#dbeafe;
   --text:#0f172a;--muted:#64748b;
-  --green:#16a34a;--red:#b91c1c;--shadow:0 1px 4px rgba(30,64,175,.12);
+  --green:#16a34a;--red:#b91c1c;
   --r:7px;--r-sm:5px;
 }
 html,body{height:100vh;overflow:hidden}
@@ -20,31 +20,23 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--navy);
   display:flex;flex-direction:column;font-size:12px;color:var(--text)}
 
 /* HEADER */
-header{
-  height:48px;min-height:48px;background:var(--navy);
+header{height:46px;min-height:46px;background:var(--navy);
   display:grid;grid-template-columns:1fr auto 1fr;
   align-items:center;padding:0 14px;
-  border-bottom:1px solid rgba(255,255,255,.12);
-}
-.hdr-left{display:flex;align-items:center;gap:8px}
+  border-bottom:1px solid rgba(255,255,255,.12)}
+.hdr-left,.hdr-right{display:flex;align-items:center;gap:8px}
+.hdr-right{justify-content:flex-end}
 .hdr-center{text-align:center}
-.logo-text{font-size:15px;font-weight:700;color:#fff;letter-spacing:.3px}
-.logo-icon{font-size:18px}
-.hdr-right{display:flex;align-items:center;gap:8px;justify-content:flex-end}
+.logo-text{font-size:15px;font-weight:700;color:#fff;letter-spacing:.2px}
 
-.ble-pill{
-  display:flex;align-items:center;gap:6px;
-  border-radius:20px;padding:4px 12px;
-  font-size:11px;font-weight:700;border:1px solid rgba(255,255,255,.15);
-  background:rgba(255,255,255,.07);color:rgba(255,255,255,.45);
-  transition:all .3s;
-}
-.ble-pill.a-pill{border-color:rgba(96,165,250,.3)}
-.ble-pill.b-pill{border-color:rgba(251,146,60,.3)}
-.ble-pill.ok{background:rgba(22,163,74,.22);border-color:rgba(34,197,94,.5);color:#86efac}
+.ble-pill{display:flex;align-items:center;gap:6px;border-radius:20px;
+  padding:4px 11px;font-size:11px;font-weight:700;
+  border:1px solid rgba(255,255,255,.12);
+  background:rgba(255,255,255,.07);color:rgba(255,255,255,.4);transition:all .3s}
+.ble-pill.ok {background:rgba(22,163,74,.22);border-color:rgba(34,197,94,.5);color:#86efac}
 .ble-pill.err{background:rgba(185,28,28,.22);border-color:rgba(239,68,68,.5);color:#fca5a5}
-.bd{width:8px;height:8px;border-radius:50%;background:#475569;transition:background .3s}
-.ble-pill.ok .bd{background:#22c55e;box-shadow:0 0 6px #22c55e;animation:blink 2s infinite}
+.bd{width:8px;height:8px;border-radius:50%;background:#475569;transition:background .3s;flex-shrink:0}
+.ble-pill.ok  .bd{background:#22c55e;box-shadow:0 0 6px #22c55e;animation:blink 2s infinite}
 .ble-pill.err .bd{background:#ef4444}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.35}}
 
@@ -54,28 +46,22 @@ header{
 #camera{max-height:100%;max-width:100%;object-fit:contain;display:block;
   cursor:crosshair;user-select:none;-webkit-user-drag:none}
 
-.cam-bar{
-  position:absolute;top:0;left:0;right:0;
-  background:linear-gradient(180deg,rgba(0,0,0,.7) 0%,transparent 100%);
-  padding:8px 14px;display:flex;align-items:center;justify-content:space-between;
-}
+.cam-bar{position:absolute;top:0;left:0;right:0;
+  background:linear-gradient(180deg,rgba(0,0,0,.72) 0%,transparent 100%);
+  padding:8px 14px;display:flex;align-items:center;justify-content:space-between}
 .cam-step{font-size:12px;font-weight:600;color:#fff}
 .cam-mode{font-size:11px;padding:2px 10px;border-radius:10px;font-weight:700}
-.cm-auto{background:#16a34a;color:#fff}
+.cm-auto  {background:#16a34a;color:#fff}
 .cm-manual{background:#b45309;color:#fff}
-.cm-wait{background:#1d4ed8;color:#fff}
+.cm-wait  {background:rgba(255,255,255,.15);color:#fff}
 .cm-paused{background:#b91c1c;color:#fff}
 
-/* Confirm overlay */
-.conf-ov{position:absolute;inset:0;background:rgba(15,23,42,.8);
-  backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;z-index:20}
-.conf-ov.hidden{display:none}
-.conf-box{background:#fff;border:2px solid var(--a);border-radius:14px;
-  padding:28px 36px;text-align:center;max-width:440px;
-  box-shadow:0 20px 60px rgba(30,64,175,.3)}
-.conf-box h2{color:var(--navy);font-size:18px;margin-bottom:6px}
-.conf-box p{color:var(--muted);font-size:12px;margin-bottom:20px}
-.conf-row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+/* Ready notification banner */
+.ready-banner{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);
+  background:rgba(30,58,138,.9);border:2px solid #60a5fa;border-radius:12px;
+  padding:14px 28px;text-align:center;color:#fff;font-weight:700;
+  font-size:14px;pointer-events:none;transition:opacity .4s}
+.ready-banner.hidden{display:none}
 
 /* Paused banner */
 .pause-banner{position:absolute;bottom:0;left:0;right:0;
@@ -87,40 +73,37 @@ header{
 .quit-modal{position:fixed;inset:0;background:rgba(0,0,0,.75);
   display:flex;align-items:center;justify-content:center;z-index:50}
 .quit-modal.hidden{display:none}
-.quit-box{background:#fff;border-radius:12px;padding:28px 36px;
-  text-align:center;max-width:360px;box-shadow:0 20px 50px rgba(0,0,0,.3)}
-.quit-box h3{color:var(--navy);font-size:18px;margin-bottom:8px}
-.quit-box p{color:var(--muted);font-size:13px;margin-bottom:22px}
+.quit-box{background:#fff;border-radius:12px;padding:26px 34px;
+  text-align:center;max-width:340px}
+.quit-box h3{color:var(--navy);font-size:17px;margin-bottom:6px}
+.quit-box p{color:var(--muted);font-size:12px;margin-bottom:20px}
 .quit-row{display:flex;gap:10px;justify-content:center}
 
-/* CONTROLS BAR */
-.ctrl-bar{
-  height:195px;min-height:195px;background:var(--bg);
+/* CONTROLS */
+.ctrl-bar{height:200px;min-height:200px;background:#f0f5ff;
   border-top:2px solid var(--border);
-  display:grid;grid-template-columns:220px 1fr 220px;
-}
+  display:grid;grid-template-columns:230px 1fr 230px}
 .ctrl-bar>*{border-right:1px solid var(--border-lt)}
 .ctrl-bar>*:last-child{border-right:none}
 
 /* TRAIN PANELS */
-.tp{padding:8px 10px;display:flex;flex-direction:column;gap:5px}
+.tp{padding:8px 10px;display:flex;flex-direction:column;gap:4px}
 .tp-hdr{display:flex;align-items:center;justify-content:space-between;
-  padding-bottom:5px;border-bottom:1px solid var(--border-lt)}
+  padding-bottom:4px;border-bottom:1px solid var(--border-lt)}
 .tp-title{font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.6px}
 .ta .tp-title{color:var(--a)}
 .tb .tp-title{color:var(--b)}
 .tp-role{font-size:9px;color:var(--muted);font-weight:500}
 
-.sp-row{display:flex;align-items:center;gap:8px}
-.sp-num{font-size:30px;font-weight:800;line-height:1}
+.sp-row{display:flex;align-items:center;gap:7px}
+.sp-num{font-size:28px;font-weight:800;line-height:1;min-width:22px;text-align:center}
 .ta .sp-num{color:var(--a)}
 .tb .sp-num{color:var(--b)}
-.sp-of7{font-size:13px;color:var(--muted)}
-
-.track{height:6px;background:#e2e8f0;border-radius:99px;overflow:hidden;flex:1}
+.sp-of7{font-size:12px;color:var(--muted)}
+.track{height:5px;background:#e2e8f0;border-radius:99px;overflow:hidden;flex:1}
 .fill{height:100%;border-radius:99px;transition:width .3s}
-.ta .fill{background:linear-gradient(90deg,#60a5fa,var(--a))}
-.tb .fill{background:linear-gradient(90deg,#fb923c,var(--b))}
+.ta .fill{background:linear-gradient(90deg,var(--a-lt),var(--a))}
+.tb .fill{background:linear-gradient(90deg,var(--b-lt),var(--b))}
 
 .conf-strip{display:flex;align-items:center;gap:5px}
 .cl{font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:600;min-width:26px}
@@ -128,24 +111,20 @@ header{
 .cf{height:100%;border-radius:99px;transition:width .3s,background .3s}
 .cp{font-size:10px;color:var(--muted);min-width:28px;text-align:right}
 
-.tb2{display:grid;grid-template-columns:1fr 1fr;gap:4px}
-.tb3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px}
-.spd-row{display:flex;gap:2px}
-.sb{flex:1;height:24px;background:#f1f5f9;border:1px solid #cbd5e1;
-  border-radius:4px;font-size:11px;font-weight:700;color:#475569;cursor:pointer;
-  transition:all .15s}
-.ta .sb:hover{background:var(--a-pale);border-color:var(--a);color:var(--a)}
-.tb .sb:hover{background:var(--b-pale);border-color:var(--b);color:var(--b)}
+.spd7{display:flex;gap:2px}
+.sb{flex:1;height:22px;background:#f1f5f9;border:1px solid #cbd5e1;
+  border-radius:4px;font-size:11px;font-weight:700;color:#475569;cursor:pointer;transition:all .15s}
+.ta .sb:hover{background:var(--a-pale);border-color:var(--a-lt);color:var(--a)}
+.tb .sb:hover{background:var(--b-pale);border-color:var(--b-lt);color:var(--b)}
+
+.tb2{display:grid;grid-template-columns:1fr 1fr;gap:3px}
+.tb3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px}
+.tb4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:3px}
 
 /* SHARED PANEL */
-.sp-panel{padding:8px 12px;display:flex;flex-direction:column;gap:5px}
+.sp-panel{padding:8px 12px;display:flex;flex-direction:column;gap:4px}
 .sp-hdr{font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.6px;
-  color:var(--navy);padding-bottom:5px;border-bottom:1px solid var(--border-lt)}
-.btn-g2{display:grid;grid-template-columns:1fr 1fr;gap:4px}
-.btn-g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px}
-.info-b{background:var(--a-pale);border:1px solid var(--border);border-radius:5px;
-  padding:4px 8px;font-size:11px;color:var(--a);text-align:center;
-  min-height:26px;display:flex;align-items:center;justify-content:center}
+  color:var(--navy);padding-bottom:4px;border-bottom:1px solid var(--border-lt)}
 
 /* BUTTONS */
 .btn{display:flex;align-items:center;justify-content:center;gap:3px;
@@ -153,88 +132,69 @@ header{
   font-size:11px;font-weight:600;cursor:pointer;transition:all .13s;
   white-space:nowrap;line-height:1.2;text-align:center}
 .btn:active{transform:scale(.96)}
-.btn-p{background:var(--a);color:#fff;border-color:var(--a-dk)}
+.btn-p {background:var(--a);color:#fff;border-color:var(--a-dk)}
 .btn-p:hover{background:var(--a-dk)}
-.btn-d{background:var(--red);color:#fff;border-color:#991b1b}
+.btn-pa{background:#b45309;color:#fff;border-color:#92400e}
+.btn-pa:hover{background:#92400e}
+.btn-d {background:var(--red);color:#fff;border-color:#991b1b}
 .btn-d:hover{background:#991b1b}
-.btn-g{background:var(--green);color:#fff;border-color:#166534}
+.btn-g {background:var(--green);color:#fff;border-color:#166534}
 .btn-g:hover{background:#166534}
-.btn-s{background:#fff1f2;color:var(--red);border-color:#fecaca}
+.btn-s {background:#fff1f2;color:var(--red);border-color:#fecaca}
 .btn-s:hover{background:var(--red);color:#fff}
-.btn-r{background:#f0fdf4;color:var(--green);border-color:#bbf7d0}
+.btn-r {background:#f0fdf4;color:var(--green);border-color:#bbf7d0}
 .btn-r:hover{background:var(--green);color:#fff}
-.btn-nav{background:var(--a-pale);color:var(--a);border-color:var(--border)}
-.btn-nav:hover{background:#dbeafe}
-.btn-nav-b{background:var(--b-pale);color:var(--b);border-color:#fed7aa}
-.btn-nav-b:hover{background:#fed7aa}
+.btn-va{background:var(--a-pale);color:var(--a);border-color:var(--border)}
+.btn-va:hover{background:#dbeafe}
+.btn-vb{background:var(--b-pale);color:var(--b);border-color:#fed7aa}
+.btn-vb:hover{background:#fed7aa}
 .btn-rev{background:#f5f3ff;color:#7c3aed;border-color:#ddd6fe}
 .btn-rev:hover{background:#7c3aed;color:#fff}
-.btn-q{background:#f8fafc;color:var(--muted);border-color:var(--border-lt)}
+.btn-q {background:#f8fafc;color:var(--muted);border-color:var(--border-lt)}
 .btn-q:hover{background:var(--a-pale);color:var(--a)}
 .btn-quit{background:#fff1f2;color:var(--red);border-color:#fecaca;font-weight:700}
 .btn-quit:hover{background:var(--red);color:#fff}
-.btn-xl{padding:11px 16px;font-size:13px;font-weight:700;border-radius:8px;min-width:150px}
+.btn-xl{padding:10px 16px;font-size:13px;font-weight:700;border-radius:8px;min-width:140px}
+.btn-sm{padding:3px 7px;font-size:10px}
 </style>
 </head>
 <body>
 
-<!-- HEADER -->
 <header>
   <div class="hdr-left">
-    <div class="ble-pill a-pill" id="ble-a">
+    <div class="ble-pill" id="ble-a">
       <span class="bd" id="dot-a"></span>Train A
     </div>
   </div>
   <div class="hdr-center">
-    <span class="logo-icon">&#128642;</span>
-    <span class="logo-text">LionChief App</span>
+    <span class="logo-text">&#128642; Conductor Properties</span>
   </div>
   <div class="hdr-right">
-    <div class="ble-pill b-pill" id="ble-b">
+    <div class="ble-pill" id="ble-b">
       Train B<span class="bd" id="dot-b"></span>
     </div>
   </div>
 </header>
 
-<!-- CAMERA -->
 <div class="cam-section">
-  <img id="camera" src="/video_feed" alt="Camera loading..." draggable="false">
+  <img id="camera" src="/video_feed" alt="Camera..." draggable="false">
 
   <div class="cam-bar">
-    <span class="cam-step" id="instruction-text">Starting up...</span>
+    <span class="cam-step" id="instruction-text">Select trains to begin</span>
     <span class="cam-mode cm-wait" id="mode-badge">WAIT</span>
   </div>
 
-  <!-- Confirm overlay -->
-  <div class="conf-ov hidden" id="confirm-overlay">
-    <div class="conf-box">
-      <h2>Both trains selected!</h2>
-      <p>How do you want to start?</p>
-      <div class="conf-row">
-        <button class="btn btn-g btn-xl" onclick="startMode('start_auto')">
-          &#9654; Start AUTO<br>
-          <small style="font-weight:400;font-size:11px">Gap detection</small>
-        </button>
-        <button class="btn btn-xl" style="background:#b45309;color:#fff;border-color:#92400e"
-                onclick="startMode('start_manual')">
-          &#127918; Start MANUAL<br>
-          <small style="font-weight:400;font-size:11px">Manual speed</small>
-        </button>
-      </div>
-      <div style="margin-top:12px">
-        <button class="btn btn-q" style="width:100%;font-size:11px"
-                onclick="goBack()">&#8592; Go Back and Re-select Trains</button>
-      </div>
-    </div>
+  <!-- Ready notification (auto-dismisses) -->
+  <div class="ready-banner hidden" id="ready-banner">
+    &#9989; Both trains selected!<br>
+    <span style="font-size:12px;font-weight:400;opacity:.85">Choose AUTO or MANUAL mode below</span>
   </div>
 
-  <!-- Paused banner -->
   <div class="pause-banner hidden" id="paused-overlay">
-    &#9888; AUTO-PAUSED -- Tracker lost. Re-select a train below.
+    &#9888; PAUSED -- Tracker lost. Re-select a train below.
   </div>
 </div>
 
-<!-- CONTROLS BAR -->
 <div class="ctrl-bar">
 
   <!-- TRAIN A -->
@@ -253,53 +213,59 @@ header{
       <div class="ct"><div class="cf" id="conf-a-fill"></div></div>
       <span class="cp" id="conf-a-pct">0%</span>
     </div>
+    <div class="spd7">
+      <button class="sb" onclick="sendCmd('a_speed',1)">1</button>
+      <button class="sb" onclick="sendCmd('a_speed',2)">2</button>
+      <button class="sb" onclick="sendCmd('a_speed',3)">3</button>
+      <button class="sb" onclick="sendCmd('a_speed',4)">4</button>
+      <button class="sb" onclick="sendCmd('a_speed',5)">5</button>
+      <button class="sb" onclick="sendCmd('a_speed',6)">6</button>
+      <button class="sb" onclick="sendCmd('a_speed',7)">7</button>
+    </div>
     <div class="tb2">
-      <button class="btn btn-nav" onclick="sendCmd('a_slower')">&#9664; Slower</button>
-      <button class="btn btn-nav" onclick="sendCmd('a_faster')">Faster &#9654;</button>
+      <button class="btn btn-va" onclick="sendCmd('a_slower')">&#9664; Slower</button>
+      <button class="btn btn-va" onclick="sendCmd('a_faster')">Faster &#9654;</button>
     </div>
-    <div class="tb3">
-      <button class="btn btn-s" onclick="sendCmd('a_stop')">&#9632; Stop</button>
-      <button class="btn btn-r" onclick="sendCmd('a_resume')">&#9654; Resume</button>
+    <div class="tb4">
+      <button class="btn btn-s"   onclick="sendCmd('a_stop')">&#9632; Stop</button>
+      <button class="btn btn-r"   onclick="sendCmd('a_resume')">&#9654; Go</button>
       <button class="btn btn-rev" onclick="sendCmd('a_reverse')">&#8645; Rev</button>
+      <button class="btn btn-q btn-sm" onclick="sendCmd('a_forward')" title="Set Forward">&#9654;&#9654;</button>
     </div>
-    <button class="btn btn-q" style="width:100%;font-size:10px" onclick="sendCmd('a_forward')">
-      &#9654;&#9654; Set Forward Direction
-    </button>
+    <div class="tb2">
+      <button class="btn btn-q btn-sm" onclick="sendCmd('horn_a')">&#128264; Horn</button>
+      <button class="btn btn-q btn-sm" onclick="sendCmd('lights_a')">&#128161; Lights</button>
+    </div>
   </div>
 
-  <!-- SHARED CONTROLS -->
+  <!-- SHARED -->
   <div class="sp-panel">
     <div class="sp-hdr">&#9881; Control Panel</div>
-    <div class="btn-g2">
-      <button class="btn btn-p" id="btn-mode" onclick="sendCmd('toggle_manual')">
-        &#9654; AUTO Mode
-      </button>
-      <button class="btn btn-d" onclick="sendCmd('stop_both')">
-        &#9632;&#9632; Stop Both
-      </button>
+    <div class="tb2">
+      <button class="btn btn-p"  id="btn-auto"   onclick="sendCmd('start_auto')">&#9654; AUTO</button>
+      <button class="btn btn-pa" id="btn-manual" onclick="sendCmd('start_manual')">&#127918; MANUAL</button>
     </div>
-    <div class="info-b" id="info-status">Waiting for train selection...</div>
-    <div class="btn-g2">
-      <button class="btn btn-q" style="color:var(--a);border-color:#bfdbfe"
-              onclick="sendCmd('reselect_a')">
-        &#9650; Reselect Train A
-      </button>
+    <button class="btn btn-d" style="width:100%" onclick="sendCmd('stop_both')">
+      &#9632;&#9632; Stop Both Trains
+    </button>
+    <div class="tb2">
+      <button class="btn btn-q" style="color:var(--a);border-color:var(--border)"
+              onclick="sendCmd('reselect_a')">&#9650; Reselect Train A</button>
       <button class="btn btn-q" style="color:var(--b);border-color:#fed7aa"
-              onclick="sendCmd('reselect_b')">
-        &#9650; Reselect Train B
-      </button>
+              onclick="sendCmd('reselect_b')">&#9650; Reselect Train B</button>
     </div>
-    <div class="btn-g3">
-      <button class="btn btn-q" onclick="sendCmd('redraw_table')">&#9633; Table</button>
-      <button class="btn btn-q" onclick="sendCmd('horn')">&#128264; Horn</button>
-      <button class="btn btn-q" onclick="sendCmd('lights')">&#128161; Lights</button>
+    <div class="tb2">
+      <button class="btn btn-q btn-sm" onclick="sendCmd('redraw_table')">&#9633; Draw Table</button>
+      <button class="btn btn-q btn-sm" onclick="sendCmd('horn')">&#128264; Horn Both</button>
     </div>
-    <div style="font-size:9px;color:var(--muted);line-height:1.6">
-      <b style="color:var(--a)">A:</b> [ ] slower/faster &nbsp;
-      <b style="color:var(--b)">B:</b> 1-7 speed, +/- adjust &nbsp;
-      <b style="color:var(--green)">All:</b> M mode, E stop both
+    <div style="font-size:9px;color:var(--muted);line-height:1.6;flex:1">
+      <b style="color:var(--a)">A:</b> [ ] keys &nbsp;
+      <b style="color:var(--b)">B:</b> 1-7 keys &nbsp;
+      <b>All:</b> M mode, E stop
     </div>
-    <button class="btn btn-quit" onclick="showQuit()">&#128683; Quit Application</button>
+    <button class="btn btn-quit" style="width:100%" onclick="showQuit()">
+      &#128683; Quit Application
+    </button>
   </div>
 
   <!-- TRAIN B -->
@@ -318,7 +284,7 @@ header{
       <div class="ct"><div class="cf" id="conf-b-fill"></div></div>
       <span class="cp" id="conf-b-pct">0%</span>
     </div>
-    <div class="spd-row">
+    <div class="spd7">
       <button class="sb" onclick="sendCmd('b_speed',1)">1</button>
       <button class="sb" onclick="sendCmd('b_speed',2)">2</button>
       <button class="sb" onclick="sendCmd('b_speed',3)">3</button>
@@ -328,17 +294,19 @@ header{
       <button class="sb" onclick="sendCmd('b_speed',7)">7</button>
     </div>
     <div class="tb2">
-      <button class="btn btn-nav-b" onclick="sendCmd('b_slower')">&#9664; Slower</button>
-      <button class="btn btn-nav-b" onclick="sendCmd('b_faster')">Faster &#9654;</button>
+      <button class="btn btn-vb" onclick="sendCmd('b_slower')">&#9664; Slower</button>
+      <button class="btn btn-vb" onclick="sendCmd('b_faster')">Faster &#9654;</button>
     </div>
-    <div class="tb3">
-      <button class="btn btn-s" onclick="sendCmd('b_stop')">&#9632; Stop</button>
-      <button class="btn btn-r" onclick="sendCmd('b_resume')">&#9654; Resume</button>
+    <div class="tb4">
+      <button class="btn btn-s"   onclick="sendCmd('b_stop')">&#9632; Stop</button>
+      <button class="btn btn-r"   onclick="sendCmd('b_resume')">&#9654; Go</button>
       <button class="btn btn-rev" onclick="sendCmd('b_reverse')">&#8645; Rev</button>
+      <button class="btn btn-q btn-sm" onclick="sendCmd('b_forward')" title="Set Forward">&#9654;&#9654;</button>
     </div>
-    <button class="btn btn-q" style="width:100%;font-size:10px" onclick="sendCmd('b_forward')">
-      &#9654;&#9654; Set Forward Direction
-    </button>
+    <div class="tb2">
+      <button class="btn btn-q btn-sm" onclick="sendCmd('horn_b')">&#128264; Horn</button>
+      <button class="btn btn-q btn-sm" onclick="sendCmd('lights_b')">&#128161; Lights</button>
+    </div>
   </div>
 
 </div>
@@ -346,8 +314,8 @@ header{
 <!-- QUIT MODAL -->
 <div class="quit-modal hidden" id="quit-modal">
   <div class="quit-box">
-    <h3>Quit LionChief?</h3>
-    <p>Both trains will be stopped and the application will close.</p>
+    <h3>Quit Conductor Properties?</h3>
+    <p>Both trains will be stopped and the app will close.</p>
     <div class="quit-row">
       <button class="btn btn-d btn-xl" onclick="confirmQuit()">Yes, Quit</button>
       <button class="btn btn-q btn-xl" onclick="closeQuit()">No, Cancel</button>
@@ -603,137 +571,114 @@ fetch('/api/status')
   .catch(() => {});
 
 
-// ── Extra UI elements ─────────────────────────────────────────
-const bpA    = document.getElementById('ble-a');
-const bpB    = document.getElementById('ble-b');
-const kmode  = null;  // no kpi bar
-const ksa    = null;
-const ksb    = null;
-const kgap   = null;
-const kv     = null;
-const kz     = null;
-const istat  = document.getElementById('info-status');
-const mbadge = document.getElementById('mode-badge');
-const itext  = document.getElementById('instruction-text');
-const caP    = document.getElementById('conf-a-pct');
-const cbP    = document.getElementById('conf-b-pct');
+// ── Cached elements ───────────────────────────────────────────
+const bpA     = document.getElementById('ble-a');
+const bpB     = document.getElementById('ble-b');
+const mbadge  = document.getElementById('mode-badge');
+const itext   = document.getElementById('instruction-text');
+const istat   = null;
+const caP     = document.getElementById('conf-a-pct');
+const cbP     = document.getElementById('conf-b-pct');
+// Alias for app.js compatibility
 const confAPct = caP;
 const confBPct = cbP;
+const kmode = null; const ksa = null; const ksb = null;
+const kgap = null; const kv = null; const kz = null;
 
-// ── Dismiss overlay immediately on mode select ────────────────
-function startMode(cmd) {
-  document.getElementById('confirm-overlay').classList.add('hidden');
-  sendCmd(cmd);
-}
-function goBack() {
-  document.getElementById('confirm-overlay').classList.add('hidden');
-  sendCmd('reselect_b');
-}
+// ── Mode functions ────────────────────────────────────────────
+function startMode(cmd) { sendCmd(cmd); }
+function goBack()       { sendCmd('reselect_b'); }
 
 // ── Quit modal ────────────────────────────────────────────────
-function showQuit() {
-  document.getElementById('quit-modal').classList.remove('hidden');
-}
-function closeQuit() {
-  document.getElementById('quit-modal').classList.add('hidden');
-}
+function showQuit()  { document.getElementById('quit-modal').classList.remove('hidden'); }
+function closeQuit() { document.getElementById('quit-modal').classList.add('hidden'); }
 async function confirmQuit() {
   document.getElementById('quit-modal').classList.add('hidden');
-  try {
-    await fetch('/api/quit', { method: 'POST' });
-  } catch(e) {}
+  try { await fetch('/api/quit', {method:'POST'}); } catch(e) {}
   setTimeout(() => {
-    document.body.innerHTML = '<div style="display:flex;height:100vh;align-items:center;justify-content:center;background:#1e3a8a;color:#fff;font-size:20px;font-family:Segoe UI">Application stopped. You can close this tab.</div>';
-  }, 600);
+    document.body.innerHTML = '<div style="height:100vh;display:flex;align-items:center;justify-content:center;background:#1e3a8a;color:#fff;font-size:18px;font-family:Segoe UI">App stopped. Close this tab.</div>';
+  }, 500);
 }
 
-// ── Real-time status updates ──────────────────────────────────
+// ── Ready banner (auto-dismiss after 3s) ──────────────────────
+socket.on('trains_ready', () => {
+  const b = document.getElementById('ready-banner');
+  if(b) {
+    b.classList.remove('hidden');
+    setTimeout(() => b.classList.add('hidden'), 3000);
+  }
+});
+
+// ── Status updates ────────────────────────────────────────────
 socket.on('status', (d) => {
   // BLE pills
-  if(bpA) {
-    const ok = d.ble_a;
-    bpA.className = 'ble-pill a-pill' + (ok ? ' ok' : ' err');
-    document.getElementById('dot-a').className = 'bd';
-  }
-  if(bpB) {
-    const ok = d.ble_b;
-    bpB.className = 'ble-pill b-pill' + (ok ? ' ok' : ' err');
-    document.getElementById('dot-b').className = 'bd';
-  }
+  if(bpA) bpA.className = 'ble-pill ' + (d.ble_a ? 'ok' : 'err');
+  if(bpB) bpB.className = 'ble-pill ' + (d.ble_b ? 'ok' : 'err');
 
-  // Speed panels
+  // Speed displays - use ?? so 0 shows correctly
   if(spdANum) spdANum.textContent = d.spd_a ?? 0;
   if(spdBNum) spdBNum.textContent = d.spd_b ?? 0;
   if(spdABar) spdABar.style.width = ((d.spd_a ?? 0) / 7 * 100) + '%';
   if(spdBBar) spdBBar.style.width = ((d.spd_b ?? 0) / 7 * 100) + '%';
 
-  // Confidence
-  if(confAFill) { confAFill.style.width = (d.conf_a||0)+'%'; confAFill.style.background = confColor(d.conf_a); }
-  if(confBFill) { confBFill.style.width = (d.conf_b||0)+'%'; confBFill.style.background = confColor(d.conf_b); }
+  // Confidence bars
+  if(confAFill) { confAFill.style.width=(d.conf_a||0)+'%'; confAFill.style.background=confColor(d.conf_a); }
+  if(confBFill) { confBFill.style.width=(d.conf_b||0)+'%'; confBFill.style.background=confColor(d.conf_b); }
   if(caP) caP.textContent = (d.conf_a||0)+'%';
   if(cbP) cbP.textContent = (d.conf_b||0)+'%';
 
   // Mode badge
-  let ml='', mc='cm-wait', st='';
-  if(d.waiting)      { ml='SELECT'; mc='cm-wait';   st='Select start mode above'; }
-  else if(d.paused)  { ml='PAUSED'; mc='cm-paused'; st='Tracker lost -- reselect a train'; }
-  else if(d.manual)  { ml='MANUAL'; mc='cm-manual'; st='Manual mode -- use buttons to control'; }
-  else               { ml='AUTO';   mc='cm-auto';   st='Auto gap detection running'; }
+  let ml='', mc='cm-wait';
+  if     (d.paused)      { ml='PAUSED'; mc='cm-paused'; }
+  else if(d.manual)      { ml='MANUAL'; mc='cm-manual'; }
+  else if(d.mode_chosen) { ml='AUTO';   mc='cm-auto';   }
+  else                   { ml='WAIT';   mc='cm-wait';   }
 
-  if(mbadge) { mbadge.textContent=ml; mbadge.className='cam-mode '+mc; }
-  if(istat)  istat.textContent = st;
-  if(btnMode) btnMode.textContent = d.manual ? 'Switch to AUTO' : 'AUTO Mode';
+  // Override with DANGER
+  if(d.zone === 'DANGER' && d.mode_chosen) { ml='DANGER'; mc='cm-paused'; }
 
-  // Confirm overlay
-  if(d.waiting) confirmOv.classList.remove('hidden');
-  // (don't force-show on waiting, startMode hides it immediately)
+  if(mbadge){ mbadge.textContent=ml; mbadge.className='cam-mode '+mc; }
 
-  // Paused banner
-  if(d.paused) pausedOv.classList.remove('hidden');
-  else pausedOv.classList.add('hidden');
+  // AUTO button highlight
+  const ba = document.getElementById('btn-auto');
+  const bm = document.getElementById('btn-manual');
+  if(ba && bm) {
+    ba.style.opacity = (!d.manual && d.mode_chosen) ? '1' : '0.55';
+    bm.style.opacity = (d.manual && d.mode_chosen)  ? '1' : '0.55';
+  }
 
-  // Camera instruction
+  // Camera instruction text
   if(itext && d.step) {
     const m = {
       'WAIT_TABLE': 'Step 1 -- Drag a box around the TABLE area',
       'WAIT_A':     'Step 2 -- Drag a box around TRAIN A  (front)',
       'WAIT_B':     'Step 3 -- Drag a box around TRAIN B  (rear)',
-      'TRACKING':   st || 'Tracking active',
+      'TRACKING':   d.paused ? 'Tracker lost -- re-select a train' :
+                    !d.mode_chosen ? 'Trains ready -- choose AUTO or MANUAL below' :
+                    d.manual ? 'Manual mode -- use buttons to control' :
+                    d.zone ? 'Zone: ' + d.zone + (d.dist !== '---' ? '  Gap: ' + d.dist + 'px' : '') :
+                    'Auto mode running',
     };
-    itext.textContent = m[d.step] || 'Tracking active';
+    itext.textContent = m[d.step] || 'Running';
   }
 
-  // Zone color on mode badge background if in danger
-  if(d.zone === 'DANGER' && ml !== 'SELECT' && ml !== 'PAUSED') {
-    mbadge.className = 'cam-mode';
-    mbadge.style.background = '#b91c1c';
-    mbadge.style.color = '#fff';
-    mbadge.textContent = 'DANGER';
-  } else {
-    mbadge.style.background = '';
-    mbadge.style.color = '';
-  }
+  // Paused banner
+  document.getElementById('paused-overlay').classList.toggle('hidden', !d.paused);
 });
 
-socket.on('confirm_needed', () => {
-  confirmOv.classList.remove('hidden');
-});
-socket.on('auto_paused', () => { pausedOv.classList.remove('hidden'); });
-socket.on('auto_resumed', () => { pausedOv.classList.add('hidden'); });
+socket.on('auto_paused',  () => document.getElementById('paused-overlay').classList.remove('hidden'));
+socket.on('auto_resumed', () => document.getElementById('paused-overlay').classList.add('hidden'));
 socket.on('camera_error', (d) => {
   const cs = document.querySelector('.cam-section');
   if(cs) {
     const e = document.createElement('div');
     e.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.88);z-index:30;padding:30px;text-align:center';
-    e.innerHTML = '<div style="color:#ef4444;font-size:15px;font-weight:700;line-height:2">'
-      + '<div style="font-size:26px;margin-bottom:8px">&#128247; Camera Error</div>'
-      + (d.msg || 'Camera unavailable')
-      + '<br><span style="color:#94a3b8;font-size:12px;font-weight:400">Fix the issue then press F5 to reload</span></div>';
+    e.innerHTML = '<div style="color:#ef4444;font-size:14px;font-weight:700;line-height:2"><div style="font-size:26px;margin-bottom:8px">&#128247; Camera Error</div>' + (d.msg||'Camera unavailable') + '<br><span style="color:#94a3b8;font-size:11px;font-weight:400">Fix issue then press F5</span></div>';
     cs.appendChild(e);
   }
 });
 
-// Fetch initial status
+// Initial fetch
 fetch('/api/status').then(r=>r.json()).then(d=>{
   if(spdANum) spdANum.textContent = d.spd_a||0;
   if(spdBNum) spdBNum.textContent = d.spd_b||0;

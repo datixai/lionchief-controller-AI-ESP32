@@ -76,8 +76,8 @@ state = {
 state_lock = threading.Lock()
 
 SELECTION_STATES = (WAIT_TABLE, WAIT_A, WAIT_B)
-DANGER_COOLDOWN  = 1.5
-RESUME_GRACE     = 5.0
+DANGER_COOLDOWN  = 0.6
+RESUME_GRACE     = 2.0
 ESCAPE_CONFIRM   = 15
 
 # ══════════════════════════════════════════════════════════════════
@@ -151,7 +151,7 @@ def draw_frame_overlay(display, tracker, pos_a, pos_b,
         dcol = {WAIT_TABLE:(0,200,200),WAIT_A:(180,180,180),WAIT_B:(0,165,255)}
         col = dcol.get(tracker.state,(200,200,200))
         cv2.rectangle(display,(x1,y1),(x2,y2),col,2)
-        lbl_map={WAIT_TABLE:"TABLE",WAIT_A:"BLUE Train",WAIT_B:"ORANGE Train"}
+        lbl_map={WAIT_TABLE:"TABLE",WAIT_A:"Train A",WAIT_B:"Train B"}
         cv2.putText(display,lbl_map.get(tracker.state,""),(x1+4,y1+18),
                     cv2.FONT_HERSHEY_SIMPLEX,0.55,col,2)
 
@@ -305,7 +305,7 @@ def camera_loop():
                 not state['waiting_confirm']):
             with state_lock:
                 state['waiting_confirm'] = True
-            socketio.emit('confirm_needed', {})
+            socketio.emit('trains_ready', {})
             logger.info("Waiting for Y/N from browser")
 
         prev_tstate = tracker.state
@@ -315,8 +315,8 @@ def camera_loop():
         spd_b = state['spd_b']
         zone  = Zone.UNKNOWN
 
-        if (not state['waiting_confirm'] and tracker.ready and
-                not state['auto_paused'] and ble):
+        if (tracker.ready and not state['auto_paused'] and ble
+                and state.get('mode_chosen', False)):
 
             a_miss = tracker.is_a_missing()
             b_miss = tracker.is_b_missing()
@@ -427,6 +427,7 @@ def camera_loop():
             'manual':   state['manual_mode'],
             'paused':   state['auto_paused'],
             'waiting':  state['waiting_confirm'],
+            'mode_chosen': state.get('mode_chosen', False),
             'step':     tracker.state,
             'a_chasing':a_chasing,
         })
@@ -502,6 +503,7 @@ def command():
         with state_lock:
             state['waiting_confirm'] = False
             state['manual_mode']     = False
+            state['mode_chosen']     = True
         if ble: ble.train_a.set_speed(config.DEFAULT_SPEED_A)
         logger.info("AUTO mode started from browser")
 
@@ -509,12 +511,14 @@ def command():
         with state_lock:
             state['waiting_confirm'] = False
             state['manual_mode']     = True
+            state['mode_chosen']     = True
         logger.info("MANUAL mode started from browser")
 
     # ── Mode ──────────────────────────────────────────────────────
     elif cmd == 'toggle_manual':
         with state_lock:
             state['manual_mode'] = not state['manual_mode']
+            state['mode_chosen'] = True
         if ctrl: ctrl.reset()
         if not state['manual_mode'] and ble:
             ble.train_a.set_speed(ble.train_a.user_speed)
@@ -575,6 +579,20 @@ def command():
         tracker.reselect_b()
     elif cmd == 'redraw_table':
         tracker.redraw_table()
+
+    elif cmd == 'a_speed':
+        spd = max(1, min(7, int(val or 1)))
+        if ble: ble.train_a.set_speed(spd)
+        with state_lock: state['spd_a'] = spd
+
+    elif cmd == 'horn_a':
+        if ble: ble.train_a.horn_on()
+    elif cmd == 'horn_b':
+        if ble: ble.train_b.horn_on()
+    elif cmd == 'lights_a':
+        if ble: ble.train_a.lights_on()
+    elif cmd == 'lights_b':
+        if ble: ble.train_b.lights_on()
 
     elif cmd == 'a_reverse':
         if ble: ble.train_a.set_reverse()

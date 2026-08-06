@@ -12,8 +12,8 @@
 
 # ── TRAIN A — FRONT TRAIN (BLE) ───────────────────────────────────
 # ★ UPDATE MAC to your actual front train address
-TRAIN_A_MAC  = "60:FA:11:E3:94:C9"   # BLUE train (correct)
-TRAIN_A_NAME = "LC-1-1-09F8-60FA"
+TRAIN_A_MAC  = "CC:01:78:D0:F0:99"
+TRAIN_A_NAME = "LC015556-99F0"
 
 # ── TRAIN B — REAR TRAIN (BLE) ────────────────────────────────────
 TRAIN_B_MAC  = "60:F9:FB:49:94:C9"
@@ -49,7 +49,7 @@ SPEED_CMDS = [
 ]
 
 # ── CAMERA ────────────────────────────────────────────────────────
-CAMERA_INDEX  = 0
+CAMERA_INDEX  = 1
 CAMERA_WIDTH  = 1280
 CAMERA_HEIGHT = 720
 CAMERA_FPS    = 30
@@ -95,11 +95,11 @@ CLOSING_RATE_WEIGHT = 0.8
 CLOSING_RATE_ALPHA  = 0.5
 
 # ── DISTANCE ZONES (surface-to-surface pixels) ────────────────────
-DISTANCE_DANGER  = 100
-DISTANCE_WARNING = 160
-DISTANCE_CAUTION = 230
-DISTANCE_SAFE    = 320
-DISTANCE_FAR     = 440
+DISTANCE_DANGER  = 160
+DISTANCE_WARNING = 250
+DISTANCE_CAUTION = 340
+DISTANCE_SAFE    = 460
+DISTANCE_FAR     = 600
 HYSTERESIS_OFFSET = 20
 
 # ── SPEED ─────────────────────────────────────────────────────────
@@ -124,7 +124,7 @@ USE_SMOOTH_DECEL = True
 # ── SMOOTHING ─────────────────────────────────────────────────────
 ALPHA_SLOW_DOWN         = 0.8
 ALPHA_SPEED_UP          = 0.20
-MIN_COMMAND_INTERVAL_MS = 250
+MIN_COMMAND_INTERVAL_MS = 150
 
 # ── AUTO-PAUSE WHEN TRACKER LOST ──────────────────────────────────
 AUTO_PAUSE_TIMEOUT_S = 1.5
