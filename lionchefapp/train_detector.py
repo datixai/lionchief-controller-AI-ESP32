@@ -218,6 +218,7 @@ class _TrainTracker:
                 # This prevents losing the tracker in the first seconds.
                 self._active = True
                 self._locked = False
+                self._seen   = time.time()   # refresh so is_missing does not fire
                 if self._px is not None:
                     self._buf.append((int(round(self._px)),
                                       int(round(self._py))))
@@ -229,6 +230,7 @@ class _TrainTracker:
                 self._vx     = 0.0
                 self._vy     = 0.0
                 self._active = True
+                self._seen   = time.time()   # refresh so is_missing never fires on stopped train
                 if self._px is not None:
                     self._buf.append((int(round(self._px)),
                                       int(round(self._py))))
@@ -336,7 +338,12 @@ class _TrainTracker:
                        config.SEARCH_RADIUS, color, 1)
 
     def is_missing(self) -> bool:
-        return (time.time()-self._seen) > config.MISSING_TIMEOUT_S
+        if self._locked:
+            self._seen = time.time()   # locked = stopped in place, refresh timeout
+            return False
+        if not self._active:
+            return True
+        return (time.time() - self._seen) > config.MISSING_TIMEOUT_S
 
     def reset(self):
         self._px=None; self._py=None; self._vx=0.0; self._vy=0.0

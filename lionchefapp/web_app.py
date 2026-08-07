@@ -65,8 +65,6 @@ state = {
     'tracker':        None,
     'ctrl':           None,
     'ble':            None,
-    'horn_on':        False,
-    'lights_on':      False,
     'a_chasing':      False,
     'last_danger_t':  0.0,
     'resume_time':    0.0,
@@ -299,6 +297,21 @@ def camera_loop():
         conf_b    = tracker.confidence_b()
         ble       = state['ble']
 
+        # Always update BLE status every frame — not gated on tracking state
+        if ble:
+            with state_lock:
+                state['ble_a'] = ble.connected_a
+                state['ble_b'] = ble.connected_b
+
+        # SAFETY NET: always stop trains if critically close, regardless of any other state
+        if (ble and dist is not None and
+                dist < config.DISTANCE_DANGER and
+                now - state['last_danger_t'] >= 0.5):
+            ble.train_b.send_stop_raw()
+            ble.train_a.send_stop_raw()
+            with state_lock: state['last_danger_t'] = now
+            logger.warning(f"SAFETY NET -- gap={dist:.0f}px both stopped")
+
         # Detect all 4 boxes selected → ask Y/N via web
         if (tracker.state == TRACKING and
                 prev_tstate == WAIT_B and
@@ -318,16 +331,19 @@ def camera_loop():
         if (tracker.ready and not state['auto_paused'] and ble
                 and state.get('mode_chosen', False)):
 
+            # Only pause if tracker is truly lost (not just locked/stopped)
             a_miss = tracker.is_a_missing()
             b_miss = tracker.is_b_missing()
+            # Extra check: if tracker is active, don't pause even if is_missing fires
+            a_ok = (pos_a is not None) or tracker._tkr_a.is_locked
+            b_ok = (pos_b is not None) or tracker._tkr_b.is_locked
+            truly_lost = (a_miss and not a_ok) or (b_miss and not b_ok)
 
-            if a_miss or b_miss:
+            if truly_lost:
                 if not state['auto_paused']:
                     with state_lock:
                         state['auto_paused'] = True
-                    if ble:
-                        ble.train_b.send_stop_raw()
-                    logger.warning("AUTO-PAUSED")
+                    logger.warning("AUTO-PAUSED -- tracker truly lost")
                     socketio.emit('auto_paused', {})
             elif state['auto_paused']:
                 with state_lock:
@@ -585,14 +601,26 @@ def command():
         if ble: ble.train_a.set_speed(spd)
         with state_lock: state['spd_a'] = spd
 
-    elif cmd == 'horn_a':
+    elif cmd == 'horn_a_on':
         if ble: ble.train_a.horn_on()
-    elif cmd == 'horn_b':
+    elif cmd == 'horn_a_off':
+        if ble: ble.train_a.horn_off()
+    elif cmd == 'horn_b_on':
         if ble: ble.train_b.horn_on()
-    elif cmd == 'lights_a':
-        if ble: ble.train_a.lights_on()
-    elif cmd == 'lights_b':
-        if ble: ble.train_b.lights_on()
+    elif cmd == 'horn_b_off':
+        if ble: ble.train_b.horn_off()
+    elif cmd == 'bell_a_on':
+        if ble: ble.train_a.bell_on()
+    elif cmd == 'bell_a_off':
+        if ble: ble.train_a.bell_off()
+    elif cmd == 'bell_b_on':
+        if ble: ble.train_b.bell_on()
+    elif cmd == 'bell_b_off':
+        if ble: ble.train_b.bell_off()
+    elif cmd == 'bell_both_on':
+        if ble: ble.train_a.bell_on(); ble.train_b.bell_on()
+    elif cmd == 'bell_both_off':
+        if ble: ble.train_a.bell_off(); ble.train_b.bell_off()
 
     elif cmd == 'a_reverse':
         if ble: ble.train_a.set_reverse()
@@ -608,24 +636,40 @@ def command():
         logger.info("Train B FORWARD")
 
     # ── Accessories ───────────────────────────────────────────────
-    elif cmd == 'horn':
-        with state_lock:
-            state['horn_on'] = not state['horn_on']
-        if ble:
-            if state['horn_on']:
-                ble.train_a.horn_on();  ble.train_b.horn_on()
-            else:
-                ble.train_a.horn_off(); ble.train_b.horn_off()
+    elif cmd == 'horn_both_on':
+        if ble: ble.train_a.horn_on(); ble.train_b.horn_on()
+    elif cmd == 'horn_both_off':
+        if ble: ble.train_a.horn_off(); ble.train_b.horn_off()
 
-    elif cmd == 'lights':
-        with state_lock:
-            state['lights_on'] = not state['lights_on']
-        if ble:
-            if state['lights_on']:
-                ble.train_a.lights_on();  ble.train_b.lights_on()
-            else:
-                ble.train_a.lights_off(); ble.train_b.lights_off()
+    return jsonify({'ok': True})
 
+
+@app.route('/api/restart', methods=['POST'])
+def restart_app():
+    """Stop trains, spawn a fresh process, then kill this one."""
+    import subprocess, signal
+    def _restart():
+        time.sleep(0.4)
+        ble = state.get('ble')
+        if ble:
+            try:
+                ble.train_a.send_stop_raw()
+                ble.train_b.send_stop_raw()
+                time.sleep(0.3)
+                ble.shutdown()
+            except Exception:
+                pass
+        # Spawn a helper that waits 2s then relaunches us
+        script = (
+            f"import time, subprocess; "
+            f"time.sleep(2); "
+            f"subprocess.Popen([r'{sys.executable}', r'{_os.path.abspath(__file__)}'], "
+            f"cwd=r'{_os.path.dirname(_os.path.abspath(__file__))}')"
+        )
+        subprocess.Popen([sys.executable, '-c', script])
+        _os.kill(_os.getpid(), signal.SIGTERM)
+    import threading as _t
+    _t.Thread(target=_restart, daemon=True).start()
     return jsonify({'ok': True})
 
 

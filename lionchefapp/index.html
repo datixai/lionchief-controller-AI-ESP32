@@ -21,16 +21,14 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--navy);
 
 /* HEADER */
 header{height:46px;min-height:46px;background:var(--navy);
-  display:grid;grid-template-columns:1fr auto 1fr;
-  align-items:center;padding:0 14px;
-  border-bottom:1px solid rgba(255,255,255,.12)}
-.hdr-left,.hdr-right{display:flex;align-items:center;gap:8px}
-.hdr-right{justify-content:flex-end}
-.hdr-center{text-align:center}
+  display:flex;align-items:center;justify-content:space-between;
+  padding:0 14px;border-bottom:1px solid rgba(255,255,255,.12)}
+.hdr-left{display:flex;align-items:center;gap:8px}
+.hdr-right{display:flex;align-items:center;gap:8px}
 .logo-text{font-size:15px;font-weight:700;color:#fff;letter-spacing:.2px}
 
 .ble-pill{display:flex;align-items:center;gap:6px;border-radius:20px;
-  padding:4px 11px;font-size:11px;font-weight:700;
+  padding:4px 12px;font-size:11px;font-weight:700;
   border:1px solid rgba(255,255,255,.12);
   background:rgba(255,255,255,.07);color:rgba(255,255,255,.4);transition:all .3s}
 .ble-pill.ok {background:rgba(22,163,74,.22);border-color:rgba(34,197,94,.5);color:#86efac}
@@ -105,13 +103,45 @@ header{height:46px;min-height:46px;background:var(--navy);
 .ta .fill{background:linear-gradient(90deg,var(--a-lt),var(--a))}
 .tb .fill{background:linear-gradient(90deg,var(--b-lt),var(--b))}
 
-.conf-strip{display:flex;align-items:center;gap:5px}
+.conf-strip{display:none}
 .cl{font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:600;min-width:26px}
 .ct{flex:1;height:4px;background:#e2e8f0;border-radius:99px;overflow:hidden}
 .cf{height:100%;border-radius:99px;transition:width .3s,background .3s}
 .cp{font-size:10px;color:var(--muted);min-width:28px;text-align:right}
 
 .spd7{display:flex;gap:2px}
+
+/* Speed slider */
+@keyframes spd-flash{0%{opacity:1}50%{opacity:.4}100%{opacity:1}}
+.spd-changed{animation:spd-flash .35s ease-in-out}
+.spd-wrap{display:flex;flex-direction:column;gap:3px}
+.spd-label{display:flex;align-items:center;justify-content:space-between}
+.spd-val{font-size:10px;color:var(--muted)}
+.slider-a,.slider-b{
+  -webkit-appearance:none;appearance:none;
+  width:100%;height:10px;border-radius:6px;
+  outline:none;cursor:pointer;
+  transition:background .15s;
+}
+.slider-a{background:linear-gradient(to right,var(--a) var(--fp,0%),#e2e8f0 var(--fp,0%))}
+.slider-b{background:linear-gradient(to right,var(--b) var(--fp,0%),#e2e8f0 var(--fp,0%))}
+.slider-a::-webkit-slider-thumb,.slider-b::-webkit-slider-thumb{
+  -webkit-appearance:none;appearance:none;
+  width:18px;height:18px;border-radius:50%;
+  background:#fff;border:2px solid currentColor;
+  box-shadow:0 1px 4px rgba(0,0,0,.18);cursor:grab;
+}
+.slider-a::-webkit-slider-thumb{border-color:var(--a)}
+.slider-b::-webkit-slider-thumb{border-color:var(--b)}
+.slider-a:active::-webkit-slider-thumb,.slider-b:active::-webkit-slider-thumb{cursor:grabbing}
+.slider-a::-moz-range-thumb,.slider-b::-moz-range-thumb{
+  width:16px;height:16px;border-radius:50%;
+  background:#fff;border:2px solid currentColor;cursor:grab;box-sizing:border-box;
+}
+.slider-a::-moz-range-thumb{border-color:var(--a)}
+.slider-b::-moz-range-thumb{border-color:var(--b)}
+.gear-marks{display:flex;justify-content:space-between;padding:0 2px}
+.gear-marks span{font-size:9px;color:#94a3b8;width:12px;text-align:center}
 .sb{flex:1;height:22px;background:#f1f5f9;border:1px solid #cbd5e1;
   border-radius:4px;font-size:11px;font-weight:700;color:#475569;cursor:pointer;transition:all .15s}
 .ta .sb:hover{background:var(--a-pale);border-color:var(--a-lt);color:var(--a)}
@@ -124,7 +154,7 @@ header{height:46px;min-height:46px;background:var(--navy);
 /* SHARED PANEL */
 .sp-panel{padding:8px 12px;display:flex;flex-direction:column;gap:4px}
 .sp-hdr{font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.6px;
-  color:var(--navy);padding-bottom:4px;border-bottom:1px solid var(--border-lt)}
+  color:var(--navy);padding-bottom:4px;border-bottom:1px solid var(--border-lt);text-align:center}
 
 /* BUTTONS */
 .btn{display:flex;align-items:center;justify-content:center;gap:3px;
@@ -162,16 +192,16 @@ header{height:46px;min-height:46px;background:var(--navy);
 
 <header>
   <div class="hdr-left">
-    <div class="ble-pill" id="ble-a">
-      <span class="bd" id="dot-a"></span>Train A
-    </div>
-  </div>
-  <div class="hdr-center">
     <span class="logo-text">&#128642; Conductor Properties</span>
   </div>
   <div class="hdr-right">
+    <div class="ble-pill" id="ble-a">
+      <span class="bd" id="dot-a"></span>
+      <span id="ble-a-txt">Train A</span>
+    </div>
     <div class="ble-pill" id="ble-b">
-      Train B<span class="bd" id="dot-b"></span>
+      <span class="bd" id="dot-b"></span>
+      <span id="ble-b-txt">Train B</span>
     </div>
   </div>
 </header>
@@ -204,23 +234,25 @@ header{height:46px;min-height:46px;background:var(--navy);
       <span class="tp-role">FRONT LEADER</span>
     </div>
     <div class="sp-row">
-      <span class="sp-num" id="spd-a-num">0</span>
-      <span class="sp-of7">/7</span>
+      <div style="display:flex;flex-direction:column;align-items:center;min-width:36px">
+        <span style="font-size:8px;color:var(--muted);text-transform:uppercase;font-weight:600;letter-spacing:.5px">Now</span>
+        <span class="sp-num" id="spd-a-num" style="min-width:24px;text-align:center">0</span>
+        <span class="sp-of7" style="font-size:9px">/7</span>
+      </div>
       <div class="track"><div class="fill" id="spd-a-bar"></div></div>
     </div>
-    <div class="conf-strip">
-      <span class="cl">Conf</span>
-      <div class="ct"><div class="cf" id="conf-a-fill"></div></div>
-      <span class="cp" id="conf-a-pct">0%</span>
-    </div>
-    <div class="spd7">
-      <button class="sb" onclick="sendCmd('a_speed',1)">1</button>
-      <button class="sb" onclick="sendCmd('a_speed',2)">2</button>
-      <button class="sb" onclick="sendCmd('a_speed',3)">3</button>
-      <button class="sb" onclick="sendCmd('a_speed',4)">4</button>
-      <button class="sb" onclick="sendCmd('a_speed',5)">5</button>
-      <button class="sb" onclick="sendCmd('a_speed',6)">6</button>
-      <button class="sb" onclick="sendCmd('a_speed',7)">7</button>
+    <div class="spd-wrap">
+      <div class="spd-label">
+        <span style="font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:600">Speed</span>
+        <span class="spd-val" id="slider-a-val">0 / 7</span>
+      </div>
+      <input type="range" min="0" max="7" value="0" step="1"
+             class="slider-a" id="slider-a"
+             oninput="setSpeedA(this.value)">
+      <div class="gear-marks">
+        <span>0</span><span>1</span><span>2</span><span>3</span>
+        <span>4</span><span>5</span><span>6</span><span>7</span>
+      </div>
     </div>
     <div class="tb2">
       <button class="btn btn-va" onclick="sendCmd('a_slower')">&#9664; Slower</button>
@@ -233,8 +265,8 @@ header{height:46px;min-height:46px;background:var(--navy);
       <button class="btn btn-q btn-sm" onclick="sendCmd('a_forward')" title="Set Forward">&#9654;&#9654;</button>
     </div>
     <div class="tb2">
-      <button class="btn btn-q btn-sm" onclick="sendCmd('horn_a')">&#128264; Horn</button>
-      <button class="btn btn-q btn-sm" onclick="sendCmd('lights_a')">&#128161; Lights</button>
+      <button class="btn btn-q btn-sm" id="horn-a-btn" onclick="toggleHorn('a')">&#128264; Horn</button>
+      <button class="btn btn-q btn-sm" id="bell-a-btn" onclick="toggleBell('a')">&#128276; Bell</button>
     </div>
   </div>
 
@@ -256,16 +288,18 @@ header{height:46px;min-height:46px;background:var(--navy);
     </div>
     <div class="tb2">
       <button class="btn btn-q btn-sm" onclick="sendCmd('redraw_table')">&#9633; Draw Table</button>
-      <button class="btn btn-q btn-sm" onclick="sendCmd('horn')">&#128264; Horn Both</button>
+      <button class="btn btn-q btn-sm" id="bell-both-btn" onclick="toggleBellBoth()">&#128276; Bell Both</button>
     </div>
     <div style="font-size:9px;color:var(--muted);line-height:1.6;flex:1">
       <b style="color:var(--a)">A:</b> [ ] keys &nbsp;
       <b style="color:var(--b)">B:</b> 1-7 keys &nbsp;
       <b>All:</b> M mode, E stop
     </div>
-    <button class="btn btn-quit" style="width:100%" onclick="showQuit()">
-      &#128683; Quit Application
-    </button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px">
+      <button class="btn" style="background:#0d4f8c;color:#fff;border-color:#0a3d6e;font-weight:700"
+              onclick="showRestart()">&#128260; Restart</button>
+      <button class="btn btn-quit" onclick="showQuit()">&#128683; Quit</button>
+    </div>
   </div>
 
   <!-- TRAIN B -->
@@ -276,22 +310,24 @@ header{height:46px;min-height:46px;background:var(--navy);
     </div>
     <div class="sp-row">
       <div class="track"><div class="fill" id="spd-b-bar"></div></div>
-      <span class="sp-of7">/7</span>
-      <span class="sp-num" id="spd-b-num">0</span>
+      <div style="display:flex;flex-direction:column;align-items:center;min-width:36px">
+        <span style="font-size:8px;color:var(--muted);text-transform:uppercase;font-weight:600;letter-spacing:.5px">Now</span>
+        <span class="sp-num" id="spd-b-num" style="min-width:24px;text-align:center">0</span>
+        <span class="sp-of7" style="font-size:9px">/7</span>
+      </div>
     </div>
-    <div class="conf-strip">
-      <span class="cl">Conf</span>
-      <div class="ct"><div class="cf" id="conf-b-fill"></div></div>
-      <span class="cp" id="conf-b-pct">0%</span>
-    </div>
-    <div class="spd7">
-      <button class="sb" onclick="sendCmd('b_speed',1)">1</button>
-      <button class="sb" onclick="sendCmd('b_speed',2)">2</button>
-      <button class="sb" onclick="sendCmd('b_speed',3)">3</button>
-      <button class="sb" onclick="sendCmd('b_speed',4)">4</button>
-      <button class="sb" onclick="sendCmd('b_speed',5)">5</button>
-      <button class="sb" onclick="sendCmd('b_speed',6)">6</button>
-      <button class="sb" onclick="sendCmd('b_speed',7)">7</button>
+    <div class="spd-wrap">
+      <div class="spd-label">
+        <span style="font-size:9px;color:var(--muted);text-transform:uppercase;font-weight:600">Speed</span>
+        <span class="spd-val" id="slider-b-val">0 / 7</span>
+      </div>
+      <input type="range" min="0" max="7" value="0" step="1"
+             class="slider-b" id="slider-b"
+             oninput="setSpeedB(this.value)">
+      <div class="gear-marks">
+        <span>0</span><span>1</span><span>2</span><span>3</span>
+        <span>4</span><span>5</span><span>6</span><span>7</span>
+      </div>
     </div>
     <div class="tb2">
       <button class="btn btn-vb" onclick="sendCmd('b_slower')">&#9664; Slower</button>
@@ -304,8 +340,8 @@ header{height:46px;min-height:46px;background:var(--navy);
       <button class="btn btn-q btn-sm" onclick="sendCmd('b_forward')" title="Set Forward">&#9654;&#9654;</button>
     </div>
     <div class="tb2">
-      <button class="btn btn-q btn-sm" onclick="sendCmd('horn_b')">&#128264; Horn</button>
-      <button class="btn btn-q btn-sm" onclick="sendCmd('lights_b')">&#128161; Lights</button>
+      <button class="btn btn-q btn-sm" id="horn-b-btn" onclick="toggleHorn('b')">&#128264; Horn</button>
+      <button class="btn btn-q btn-sm" id="bell-b-btn" onclick="toggleBell('b')">&#128276; Bell</button>
     </div>
   </div>
 
@@ -321,6 +357,19 @@ header{height:46px;min-height:46px;background:var(--navy);
       <button class="btn btn-q btn-xl" onclick="closeQuit()">No, Cancel</button>
     </div>
   </div>
+<!-- RESTART MODAL -->
+<div class="quit-modal hidden" id="restart-modal">
+  <div class="quit-box">
+    <h3>Restart Application?</h3>
+    <p>Both trains will be stopped. The app will restart in about 3 seconds.</p>
+    <div class="quit-row">
+      <button class="btn btn-xl" style="background:#0d4f8c;color:#fff;border-color:#0a3d6e;font-weight:700"
+              onclick="confirmRestart()">Yes, Restart</button>
+      <button class="btn btn-q btn-xl" onclick="closeRestart()">No, Cancel</button>
+    </div>
+  </div>
+</div>
+
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
@@ -577,13 +626,44 @@ const bpB     = document.getElementById('ble-b');
 const mbadge  = document.getElementById('mode-badge');
 const itext   = document.getElementById('instruction-text');
 const istat   = null;
-const caP     = document.getElementById('conf-a-pct');
-const cbP     = document.getElementById('conf-b-pct');
+const caP     = null;  // CONF removed
+const cbP     = null;  // CONF removed
 // Alias for app.js compatibility
 const confAPct = caP;
 const confBPct = cbP;
 const kmode = null; const ksa = null; const ksb = null;
 const kgap = null; const kv = null; const kz = null;
+
+// ── Speed sliders ─────────────────────────────────────────────
+function updateSlider(id, val) {
+  const el = document.getElementById(id);
+  if(!el) return;
+  el.value = val;
+  const pct = (val / 7 * 100).toFixed(1) + '%';
+  el.style.setProperty('--fp', pct);
+  // inline style for Firefox compatibility
+  if(id === 'slider-a') {
+    el.style.background = `linear-gradient(to right, var(--a) ${pct}, #e2e8f0 ${pct})`;
+  } else {
+    el.style.background = `linear-gradient(to right, var(--b) ${pct}, #e2e8f0 ${pct})`;
+  }
+  const lbl = document.getElementById(id + '-val');
+  if(lbl) lbl.textContent = val + ' / 7';
+}
+
+function setSpeedA(val) {
+  val = parseInt(val);
+  updateSlider('slider-a', val);
+  if(val === 0) sendCmd('a_stop');
+  else          sendCmd('a_speed', val);
+}
+
+function setSpeedB(val) {
+  val = parseInt(val);
+  updateSlider('slider-b', val);
+  if(val === 0) sendCmd('b_stop');
+  else          sendCmd('b_speed', val);
+}
 
 // ── Mode functions ────────────────────────────────────────────
 function startMode(cmd) { sendCmd(cmd); }
@@ -592,6 +672,30 @@ function goBack()       { sendCmd('reselect_b'); }
 // ── Quit modal ────────────────────────────────────────────────
 function showQuit()  { document.getElementById('quit-modal').classList.remove('hidden'); }
 function closeQuit() { document.getElementById('quit-modal').classList.add('hidden'); }
+
+function showRestart()  { document.getElementById('restart-modal').classList.remove('hidden'); }
+function closeRestart() { document.getElementById('restart-modal').classList.add('hidden'); }
+
+async function confirmRestart() {
+  document.getElementById('restart-modal').classList.add('hidden');
+  // Show restarting overlay
+  const cs = document.querySelector('.cam-section');
+  const ov = document.createElement('div');
+  ov.id = 'restart-ov';
+  ov.style.cssText = 'position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(13,79,140,.92);z-index:40';
+  ov.innerHTML = '<div style="color:#fff;font-size:18px;font-weight:700;text-align:center">&#128260; Restarting...<br><span style="font-size:13px;font-weight:400;opacity:.8;margin-top:8px;display:block">Reconnecting in a moment</span></div>';
+  if(cs) cs.appendChild(ov);
+  try { await fetch('/api/restart', {method:'POST'}); } catch(e) {}
+  // Poll until server is back then reload
+  let attempts = 0;
+  const poll = setInterval(async () => {
+    attempts++;
+    try {
+      const r = await fetch('/api/status');
+      if(r.ok) { clearInterval(poll); location.reload(); }
+    } catch(e) { if(attempts > 30) { clearInterval(poll); location.reload(); } }
+  }, 500);
+}
 async function confirmQuit() {
   document.getElementById('quit-modal').classList.add('hidden');
   try { await fetch('/api/quit', {method:'POST'}); } catch(e) {}
@@ -611,15 +715,41 @@ socket.on('trains_ready', () => {
 
 // ── Status updates ────────────────────────────────────────────
 socket.on('status', (d) => {
-  // BLE pills
-  if(bpA) bpA.className = 'ble-pill ' + (d.ble_a ? 'ok' : 'err');
-  if(bpB) bpB.className = 'ble-pill ' + (d.ble_b ? 'ok' : 'err');
+  // BLE pills - show connection state with text
+  const bleATxt = document.getElementById('ble-a-txt');
+  const bleBTxt = document.getElementById('ble-b-txt');
+  if(bpA) {
+    bpA.className = 'ble-pill ' + (d.ble_a ? 'ok' : 'err');
+    if(bleATxt) bleATxt.textContent = d.ble_a ? 'Train A  Connected' : 'Train A  Waiting';
+  }
+  if(bpB) {
+    bpB.className = 'ble-pill ' + (d.ble_b ? 'ok' : 'err');
+    if(bleBTxt) bleBTxt.textContent = d.ble_b ? 'Train B  Connected' : 'Train B  Waiting';
+  }
 
-  // Speed displays - use ?? so 0 shows correctly
-  if(spdANum) spdANum.textContent = d.spd_a ?? 0;
-  if(spdBNum) spdBNum.textContent = d.spd_b ?? 0;
-  if(spdABar) spdABar.style.width = ((d.spd_a ?? 0) / 7 * 100) + '%';
-  if(spdBBar) spdBBar.style.width = ((d.spd_b ?? 0) / 7 * 100) + '%';
+  // Speed displays - flash when value changes
+  const newA = d.spd_a ?? 0, newB = d.spd_b ?? 0;
+  if(spdANum) {
+    if(spdANum.textContent != String(newA)) {
+      spdANum.textContent = newA;
+      spdANum.classList.remove('spd-changed');
+      void spdANum.offsetWidth;
+      spdANum.classList.add('spd-changed');
+    }
+  }
+  if(spdBNum) {
+    if(spdBNum.textContent != String(newB)) {
+      spdBNum.textContent = newB;
+      spdBNum.classList.remove('spd-changed');
+      void spdBNum.offsetWidth;
+      spdBNum.classList.add('spd-changed');
+    }
+  }
+  if(spdABar) spdABar.style.width = (newA / 7 * 100) + '%';
+  if(spdBBar) spdBBar.style.width = (newB / 7 * 100) + '%';
+  // Update sliders to reflect real-time speed
+  updateSlider('slider-a', newA);
+  updateSlider('slider-b', newB);
 
   // Confidence bars
   if(confAFill) { confAFill.style.width=(d.conf_a||0)+'%'; confAFill.style.background=confColor(d.conf_a); }
@@ -677,6 +807,59 @@ socket.on('camera_error', (d) => {
     cs.appendChild(e);
   }
 });
+
+// ── Horn and Bell toggle state ────────────────────────────────
+const hornState = {a: false, b: false};
+const bellState = {a: false, b: false};
+let   bellBothOn = false;
+
+function toggleHorn(train) {
+  hornState[train] = !hornState[train];
+  const on = hornState[train];
+  sendCmd(on ? `horn_${train}_on` : `horn_${train}_off`);
+  const btn = document.getElementById(`horn-${train}-btn`);
+  if(btn) {
+    btn.textContent = on ? '\u{1F50A} Horn ON' : '\u{1F514} Horn';
+    btn.style.background = on ? '#16a34a' : '';
+    btn.style.color      = on ? '#fff'    : '';
+    btn.style.borderColor= on ? '#166534' : '';
+  }
+}
+
+function toggleBell(train) {
+  bellState[train] = !bellState[train];
+  const on = bellState[train];
+  sendCmd(on ? `bell_${train}_on` : `bell_${train}_off`);
+  const btn = document.getElementById(`bell-${train}-btn`);
+  if(btn) {
+    btn.textContent = on ? '\u{1F514} Bell ON' : '\u{1F514} Bell';
+    btn.style.background = on ? '#7c3aed' : '';
+    btn.style.color      = on ? '#fff'    : '';
+    btn.style.borderColor= on ? '#6d28d9' : '';
+  }
+}
+
+function toggleBellBoth() {
+  bellBothOn = !bellBothOn;
+  bellState.a = bellBothOn;
+  bellState.b = bellBothOn;
+  sendCmd(bellBothOn ? 'bell_both_on' : 'bell_both_off');
+  const btn = document.getElementById('bell-both-btn');
+  if(btn) {
+    btn.textContent = bellBothOn ? '\u{1F514} Bell ON' : '\u{1F514} Bell Both';
+    btn.style.background = bellBothOn ? '#7c3aed' : '';
+    btn.style.color      = bellBothOn ? '#fff'    : '';
+  }
+  // sync per-train button states
+  ['a','b'].forEach(t => {
+    const b = document.getElementById(`bell-${t}-btn`);
+    if(b) {
+      b.textContent = bellBothOn ? '\u{1F514} Bell ON' : '\u{1F514} Bell';
+      b.style.background = bellBothOn ? '#7c3aed' : '';
+      b.style.color      = bellBothOn ? '#fff'    : '';
+    }
+  });
+}
 
 // Initial fetch
 fetch('/api/status').then(r=>r.json()).then(d=>{
