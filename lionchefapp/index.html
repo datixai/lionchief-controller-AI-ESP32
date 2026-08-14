@@ -15,8 +15,9 @@
   --green:#16a34a;--red:#b91c1c;
   --r:7px;--r-sm:5px;
 }
-html,body{height:100vh;overflow:hidden}
-body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--navy);
+html{height:100vh;height:100dvh}
+body{height:100vh;height:100dvh;overflow:hidden;
+  font-family:'Segoe UI',system-ui,sans-serif;background:var(--navy);
   display:flex;flex-direction:column;font-size:12px;color:var(--text)}
 
 /* HEADER */
@@ -40,7 +41,8 @@ header{height:46px;min-height:46px;background:var(--navy);
 
 /* CAMERA */
 .cam-section{flex:1;overflow:hidden;background:#000;position:relative;
-  display:flex;align-items:center;justify-content:center}
+  display:flex;align-items:center;justify-content:center;
+  min-height:0}
 #camera{max-height:100%;max-width:100%;object-fit:contain;display:block;
   cursor:crosshair;user-select:none;-webkit-user-drag:none}
 
@@ -78,23 +80,23 @@ header{height:46px;min-height:46px;background:var(--navy);
 .quit-row{display:flex;gap:10px;justify-content:center}
 
 /* CONTROLS */
-.ctrl-bar{height:200px;min-height:200px;background:#f0f5ff;
-  border-top:2px solid var(--border);
+.ctrl-bar{height:163px;min-height:163px;background:#f0f5ff;
+  border-top:1px solid var(--border);
   display:grid;grid-template-columns:230px 1fr 230px}
 .ctrl-bar>*{border-right:1px solid var(--border-lt)}
 .ctrl-bar>*:last-child{border-right:none}
 
 /* TRAIN PANELS */
-.tp{padding:8px 10px;display:flex;flex-direction:column;gap:4px}
+.tp{padding:5px 8px;display:flex;flex-direction:column;gap:3px}
 .tp-hdr{display:flex;align-items:center;justify-content:space-between;
-  padding-bottom:4px;border-bottom:1px solid var(--border-lt)}
+  padding-bottom:3px;border-bottom:1px solid var(--border-lt)}
 .tp-title{font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.6px}
 .ta .tp-title{color:var(--a)}
 .tb .tp-title{color:var(--b)}
 .tp-role{font-size:9px;color:var(--muted);font-weight:500}
 
-.sp-row{display:flex;align-items:center;gap:7px}
-.sp-num{font-size:28px;font-weight:800;line-height:1;min-width:22px;text-align:center}
+.sp-row{display:flex;align-items:center;gap:5px}
+.sp-num{font-size:22px;font-weight:800;line-height:1;min-width:20px;text-align:center}
 .ta .sp-num{color:var(--a)}
 .tb .sp-num{color:var(--b)}
 .sp-of7{font-size:12px;color:var(--muted)}
@@ -114,12 +116,12 @@ header{height:46px;min-height:46px;background:var(--navy);
 /* Speed slider */
 @keyframes spd-flash{0%{opacity:1}50%{opacity:.4}100%{opacity:1}}
 .spd-changed{animation:spd-flash .35s ease-in-out}
-.spd-wrap{display:flex;flex-direction:column;gap:3px}
+.spd-wrap{display:flex;flex-direction:column;gap:2px}
 .spd-label{display:flex;align-items:center;justify-content:space-between}
 .spd-val{font-size:10px;color:var(--muted)}
 .slider-a,.slider-b{
   -webkit-appearance:none;appearance:none;
-  width:100%;height:10px;border-radius:6px;
+  width:100%;height:8px;border-radius:5px;
   outline:none;cursor:pointer;
   transition:background .15s;
 }
@@ -140,25 +142,25 @@ header{height:46px;min-height:46px;background:var(--navy);
 }
 .slider-a::-moz-range-thumb{border-color:var(--a)}
 .slider-b::-moz-range-thumb{border-color:var(--b)}
-.gear-marks{display:flex;justify-content:space-between;padding:0 2px}
-.gear-marks span{font-size:9px;color:#94a3b8;width:12px;text-align:center}
+.gear-marks{display:flex;justify-content:space-between;padding:0 2px;margin-top:-1px}
+.gear-marks span{font-size:8px;color:#94a3b8;width:12px;text-align:center}
 .sb{flex:1;height:22px;background:#f1f5f9;border:1px solid #cbd5e1;
   border-radius:4px;font-size:11px;font-weight:700;color:#475569;cursor:pointer;transition:all .15s}
 .ta .sb:hover{background:var(--a-pale);border-color:var(--a-lt);color:var(--a)}
 .tb .sb:hover{background:var(--b-pale);border-color:var(--b-lt);color:var(--b)}
 
-.tb2{display:grid;grid-template-columns:1fr 1fr;gap:3px}
-.tb3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:3px}
-.tb4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:3px}
+.tb2{display:grid;grid-template-columns:1fr 1fr;gap:2px}
+.tb3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:2px}
+.tb4{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:2px}
 
 /* SHARED PANEL */
-.sp-panel{padding:8px 12px;display:flex;flex-direction:column;gap:4px}
+.sp-panel{padding:5px 10px;display:flex;flex-direction:column;gap:3px}
 .sp-hdr{font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.6px;
-  color:var(--navy);padding-bottom:4px;border-bottom:1px solid var(--border-lt);text-align:center}
+  color:var(--navy);padding-bottom:3px;border-bottom:1px solid var(--border-lt);text-align:center}
 
 /* BUTTONS */
 .btn{display:flex;align-items:center;justify-content:center;gap:3px;
-  padding:5px 8px;border-radius:var(--r-sm);border:1px solid transparent;
+  padding:4px 7px;border-radius:var(--r-sm);border:1px solid transparent;
   font-size:11px;font-weight:600;cursor:pointer;transition:all .13s;
   white-space:nowrap;line-height:1.2;text-align:center}
 .btn:active{transform:scale(.96)}
@@ -234,10 +236,9 @@ header{height:46px;min-height:46px;background:var(--navy);
       <span class="tp-role">FRONT LEADER</span>
     </div>
     <div class="sp-row">
-      <div style="display:flex;flex-direction:column;align-items:center;min-width:36px">
-        <span style="font-size:8px;color:var(--muted);text-transform:uppercase;font-weight:600;letter-spacing:.5px">Now</span>
-        <span class="sp-num" id="spd-a-num" style="min-width:24px;text-align:center">0</span>
-        <span class="sp-of7" style="font-size:9px">/7</span>
+      <div style="display:flex;flex-direction:column;align-items:center;min-width:32px">
+        <span class="sp-num" id="spd-a-num" style="min-width:22px;text-align:center">0</span>
+        <span class="sp-of7" style="font-size:9px;line-height:1">/7</span>
       </div>
       <div class="track"><div class="fill" id="spd-a-bar"></div></div>
     </div>
@@ -254,15 +255,15 @@ header{height:46px;min-height:46px;background:var(--navy);
         <span>4</span><span>5</span><span>6</span><span>7</span>
       </div>
     </div>
-    <div class="tb2">
-      <button class="btn btn-va" onclick="sendCmd('a_slower')">&#9664; Slower</button>
-      <button class="btn btn-va" onclick="sendCmd('a_faster')">Faster &#9654;</button>
+    <div class="tb3">
+      <button class="btn btn-va" onclick="sendCmd('a_slower')">&#9664; Slow</button>
+      <button class="btn btn-s"  onclick="sendCmd('a_stop')">&#9632; Stop</button>
+      <button class="btn btn-va" onclick="sendCmd('a_faster')">Fast &#9654;</button>
     </div>
-    <div class="tb4">
-      <button class="btn btn-s"   onclick="sendCmd('a_stop')">&#9632; Stop</button>
+    <div class="tb3">
       <button class="btn btn-r"   onclick="sendCmd('a_resume')">&#9654; Go</button>
       <button class="btn btn-rev" onclick="sendCmd('a_reverse')">&#8645; Rev</button>
-      <button class="btn btn-q btn-sm" onclick="sendCmd('a_forward')" title="Set Forward">&#9654;&#9654;</button>
+      <button class="btn btn-q btn-sm" onclick="sendCmd('a_forward')">&#9654;&#9654; Fwd</button>
     </div>
     <div class="tb2">
       <button class="btn btn-q btn-sm" id="horn-a-btn" onclick="toggleHorn('a')">&#128264; Horn</button>
@@ -310,10 +311,9 @@ header{height:46px;min-height:46px;background:var(--navy);
     </div>
     <div class="sp-row">
       <div class="track"><div class="fill" id="spd-b-bar"></div></div>
-      <div style="display:flex;flex-direction:column;align-items:center;min-width:36px">
-        <span style="font-size:8px;color:var(--muted);text-transform:uppercase;font-weight:600;letter-spacing:.5px">Now</span>
-        <span class="sp-num" id="spd-b-num" style="min-width:24px;text-align:center">0</span>
-        <span class="sp-of7" style="font-size:9px">/7</span>
+      <div style="display:flex;flex-direction:column;align-items:center;min-width:32px">
+        <span class="sp-num" id="spd-b-num" style="min-width:22px;text-align:center">0</span>
+        <span class="sp-of7" style="font-size:9px;line-height:1">/7</span>
       </div>
     </div>
     <div class="spd-wrap">
@@ -329,15 +329,15 @@ header{height:46px;min-height:46px;background:var(--navy);
         <span>4</span><span>5</span><span>6</span><span>7</span>
       </div>
     </div>
-    <div class="tb2">
-      <button class="btn btn-vb" onclick="sendCmd('b_slower')">&#9664; Slower</button>
-      <button class="btn btn-vb" onclick="sendCmd('b_faster')">Faster &#9654;</button>
+    <div class="tb3">
+      <button class="btn btn-vb" onclick="sendCmd('b_slower')">&#9664; Slow</button>
+      <button class="btn btn-s"  onclick="sendCmd('b_stop')">&#9632; Stop</button>
+      <button class="btn btn-vb" onclick="sendCmd('b_faster')">Fast &#9654;</button>
     </div>
-    <div class="tb4">
-      <button class="btn btn-s"   onclick="sendCmd('b_stop')">&#9632; Stop</button>
+    <div class="tb3">
       <button class="btn btn-r"   onclick="sendCmd('b_resume')">&#9654; Go</button>
       <button class="btn btn-rev" onclick="sendCmd('b_reverse')">&#8645; Rev</button>
-      <button class="btn btn-q btn-sm" onclick="sendCmd('b_forward')" title="Set Forward">&#9654;&#9654;</button>
+      <button class="btn btn-q btn-sm" onclick="sendCmd('b_forward')">&#9654;&#9654; Fwd</button>
     </div>
     <div class="tb2">
       <button class="btn btn-q btn-sm" id="horn-b-btn" onclick="toggleHorn('b')">&#128264; Horn</button>
